@@ -12,6 +12,7 @@ digiresell-frontend/ ← Frontend (React + Vite + Tailwind)
 ## ⚡ Démarrage rapide
 
 ### Prérequis
+
 - Node.js v18+ → https://nodejs.org
 - Un compte MongoDB Atlas (gratuit) → https://cloud.mongodb.com
 
@@ -28,6 +29,7 @@ cp .env.example .env
 ```
 
 Ouvre `.env` et remplis :
+
 ```
 MONGODB_URI=mongodb+srv://USER:PASSWORD@cluster.mongodb.net/digiresell
 JWT_ACCESS_SECRET=une_chaine_aleatoire_longue_ici
@@ -64,40 +66,43 @@ npm run dev
 
 ## 🔑 Connexion par défaut
 
-| Champ    | Valeur                  |
-|----------|-------------------------|
-| Email    | admin@digiresell.com    |
-| Password | Admin@123456            |
+| Champ    | Valeur               |
+| -------- | -------------------- |
+| Email    | admin@digiresell.com |
+| Password | Admin@123456         |
 
 ---
 
 ## 📡 Routes API principales
 
 ### Auth
-| Méthode | Route              | Description              |
-|---------|--------------------|--------------------------|
-| POST    | /api/auth/login    | Connexion                |
-| POST    | /api/auth/refresh  | Rafraîchir le token      |
-| POST    | /api/auth/logout   | Déconnexion              |
-| GET     | /api/auth/me       | Profil connecté          |
+
+| Méthode | Route             | Description         |
+| ------- | ----------------- | ------------------- |
+| POST    | /api/auth/login   | Connexion           |
+| POST    | /api/auth/refresh | Rafraîchir le token |
+| POST    | /api/auth/logout  | Déconnexion         |
+| GET     | /api/auth/me      | Profil connecté     |
 
 ### Abonnements
-| Méthode | Route                            | Description                    |
-|---------|----------------------------------|--------------------------------|
-| GET     | /api/subscriptions               | Liste (filtres: status, J-7)   |
-| POST    | /api/subscriptions               | Créer (allocation automatique) |
-| PATCH   | /api/subscriptions/:id/renew     | Renouveler en 1 clic           |
-| PATCH   | /api/subscriptions/:id/migrate   | Migrer vers un autre compte    |
-| PATCH   | /api/subscriptions/:id/status    | Changer le statut              |
+
+| Méthode | Route                          | Description                    |
+| ------- | ------------------------------ | ------------------------------ |
+| GET     | /api/subscriptions             | Liste (filtres: status, J-7)   |
+| POST    | /api/subscriptions             | Créer (allocation automatique) |
+| PATCH   | /api/subscriptions/:id/renew   | Renouveler en 1 clic           |
+| PATCH   | /api/subscriptions/:id/migrate | Migrer vers un autre compte    |
+| PATCH   | /api/subscriptions/:id/status  | Changer le statut              |
 
 ### Dashboard
-| Méthode | Route                          | Description              |
-|---------|--------------------------------|--------------------------|
-| GET     | /api/dashboard/stats           | KPIs (MRR, profit, ...)  |
-| GET     | /api/dashboard/revenue-by-service | Revenus par service   |
-| GET     | /api/dashboard/monthly-revenue | Historique mensuel       |
-| GET     | /api/dashboard/expiring-soon   | Abonnements J-7          |
-| GET     | /api/dashboard/top-partners    | Classement partenaires   |
+
+| Méthode | Route                             | Description             |
+| ------- | --------------------------------- | ----------------------- |
+| GET     | /api/dashboard/stats              | KPIs (MRR, profit, ...) |
+| GET     | /api/dashboard/revenue-by-service | Revenus par service     |
+| GET     | /api/dashboard/monthly-revenue    | Historique mensuel      |
+| GET     | /api/dashboard/expiring-soon      | Abonnements J-7         |
+| GET     | /api/dashboard/top-partners       | Classement partenaires  |
 
 ---
 
@@ -115,11 +120,11 @@ Quand tu crées un abonnement sans préciser de compte :
 
 ## ⏱️ Automatisation (Cron)
 
-| Fréquence   | Action                                         |
-|-------------|------------------------------------------------|
-| Toutes les heures | `active → overdue` si date dépassée    |
-| Toutes les heures | `overdue → suspended` après 5 jours   |
-| Chaque jour 8h    | Log des abonnements expirant dans 3j  |
+| Fréquence         | Action                               |
+| ----------------- | ------------------------------------ |
+| Toutes les heures | `active → overdue` si date dépassée  |
+| Toutes les heures | `overdue → suspended` après 5 jours  |
+| Chaque jour 8h    | Log des abonnements expirant dans 3j |
 
 ---
 
@@ -138,6 +143,7 @@ railway up
 ```
 
 Variables d'environnement à configurer dans Railway :
+
 - `MONGODB_URI` (fourni automatiquement si tu utilises Railway MongoDB)
 - `JWT_ACCESS_SECRET`
 - `JWT_REFRESH_SECRET`
@@ -153,6 +159,7 @@ vercel
 ```
 
 Variable d'environnement dans Vercel :
+
 - `VITE_API_URL=https://ton-api.railway.app/api`
 
 ---
@@ -168,15 +175,15 @@ Variable d'environnement dans Vercel :
 
 ## 🧩 Stack technique
 
-| Couche      | Technologie                              |
-|-------------|------------------------------------------|
-| Backend     | Node.js, Express.js                      |
-| Base de données | MongoDB + Mongoose                   |
-| Auth        | JWT (Access 15min + Refresh 30j)         |
-| Dates       | dayjs (UTC pour stockage)                |
-| Transactions | Mongoose Sessions (atomique)            |
-| Cron        | node-cron                                |
-| Frontend    | React 18 + Vite                          |
-| Style       | Tailwind CSS                             |
-| Data fetching | React Query v5 + Axios                 |
-| Routing     | React Router v6                          |
+| Couche          | Technologie                      |
+| --------------- | -------------------------------- |
+| Backend         | Node.js, Express.js              |
+| Base de données | MongoDB + Mongoose               |
+| Auth            | JWT (Access 15min + Refresh 30j) |
+| Dates           | dayjs (UTC pour stockage)        |
+| Transactions    | Mongoose Sessions (atomique)     |
+| Cron            | node-cron                        |
+| Frontend        | React 18 + Vite                  |
+| Style           | Tailwind CSS                     |
+| Data fetching   | React Query v5 + Axios           |
+| Routing         | React Router v6                  |
