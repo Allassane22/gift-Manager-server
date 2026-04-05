@@ -1,4 +1,6 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
@@ -100,6 +102,6 @@ connectDB()
     console.error("Impossible de démarrer:", err);
     process.exit(1);
   });
-console.log("Ma chaine de connexion :", process.env.MONGO_URI);
+console.log("Ma chaine de connexion :", process.env.MONGODB_URI);
 
 module.exports = app;
