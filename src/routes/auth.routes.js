@@ -47,4 +47,33 @@ router.get('/me', protect, (req, res) => {
   res.json({ success: true, data: req.user });
 });
 
+// PUT /api/auth/profile — modifier son propre profil
+router.put('/profile', protect, async (req, res, next) => {
+  try {
+    const { name, email, phone } = req.body;
+    const User = require('../models/User');
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: { name, email, phone } },
+      { new: true, runValidators: true }
+    ).select('-password');
+    res.json({ success: true, data: user });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/auth/password — changer son propre mot de passe
+router.put('/password', protect, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const User = require('../models/User');
+    const user = await User.findById(req.user._id).select('+password');
+    const isValid = await user.comparePassword(currentPassword);
+    if (!isValid) return res.status(401).json({ success: false, message: 'Mot de passe actuel incorrect' });
+    if (!newPassword || newPassword.length < 8)
+      return res.status(400).json({ success: false, message: 'Minimum 8 caractères' });
+    user.password = newPassword;
+    await user.save();
+    res.json({ success: true, message: 'Mot de passe changé avec succès' });
+  } catch (err) { next(err); }
+});
 module.exports = router;
