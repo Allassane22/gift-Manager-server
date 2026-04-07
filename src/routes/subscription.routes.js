@@ -12,6 +12,26 @@ dayjs.extend(utc);
 // Toutes les routes nécessitent d'être connecté
 router.use(protect);
 
+function normalizeSubscriptionFields(payload = {}) {
+  const normalized = { ...payload };
+
+  ['clientId', 'accountId', 'profileId', 'partnerId', 'newAccountId', 'newProfileId'].forEach((key) => {
+    if (typeof normalized[key] === 'string') normalized[key] = normalized[key].trim() || null;
+  });
+
+  ['purchasePrice', 'pricePaid', 'commissionValue', 'newPricePaid'].forEach((key) => {
+    if (normalized[key] !== undefined && normalized[key] !== null && normalized[key] !== '') {
+      normalized[key] = Number(normalized[key]);
+    }
+  });
+
+  if (typeof normalized.service === 'string') normalized.service = normalized.service.trim();
+  if (typeof normalized.commissionType === 'string') normalized.commissionType = normalized.commissionType.trim();
+  if (typeof normalized.reason === 'string') normalized.reason = normalized.reason.trim() || '';
+
+  return normalized;
+}
+
 // ─── GET /api/subscriptions ───────────────────────────────────────────────────
 // Filtres: ?partnerId=&status=&service=&page=&limit=&expiringSoon=true
 router.get('/', ownDataOnly, async (req, res, next) => {
@@ -100,10 +120,13 @@ router.post('/', restrict('admin'), async (req, res, next) => {
       clientId, service, accountId, profileId, partnerId,
       startDate, endDate, purchasePrice, pricePaid,
       commissionType, commissionValue,
-    } = req.body;
+    } = normalizeSubscriptionFields(req.body);
 
     if (!clientId || !service || !endDate || !purchasePrice || !pricePaid) {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
+    }
+    if ([purchasePrice, pricePaid, commissionValue].some((value) => value !== null && value !== undefined && Number.isNaN(value))) {
+      return res.status(400).json({ success: false, message: 'Montants invalides' });
     }
 
     const subscription = await createSubscription({
@@ -125,8 +148,11 @@ router.post('/', restrict('admin'), async (req, res, next) => {
 // ─── PATCH /api/subscriptions/:id/renew ──────────────────────────────────────
 router.patch('/:id/renew', restrict('admin'), async (req, res, next) => {
   try {
-    const { newEndDate, newPricePaid } = req.body;
+    const { newEndDate, newPricePaid } = normalizeSubscriptionFields(req.body);
     if (!newEndDate) return res.status(400).json({ success: false, message: 'Nouvelle date requise' });
+    if (newPricePaid !== undefined && newPricePaid !== null && Number.isNaN(newPricePaid)) {
+      return res.status(400).json({ success: false, message: 'Nouveau montant invalide' });
+    }
 
     const subscription = await renewSubscription({
       subscriptionId: req.params.id,
@@ -144,7 +170,11 @@ router.patch('/:id/renew', restrict('admin'), async (req, res, next) => {
 // ─── PATCH /api/subscriptions/:id/migrate ────────────────────────────────────
 router.patch('/:id/migrate', restrict('admin'), async (req, res, next) => {
   try {
-    const { newAccountId, newProfileId, reason } = req.body;
+    const { newAccountId, newProfileId, reason } = normalizeSubscriptionFields({
+      newAccountId: req.body.newAccountId,
+      newProfileId: req.body.newProfileId,
+      reason: req.body.reason,
+    });
     if (!newAccountId || !newProfileId) {
       return res.status(400).json({ success: false, message: 'Nouveau compte et profil requis' });
     }

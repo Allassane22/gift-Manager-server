@@ -8,6 +8,18 @@ const { findAvailableSlot } = require('../services/allocation.service');
 
 router.use(protect, restrict('admin'));
 
+function normalizeOptionalAccountFields(payload = {}) {
+  const normalized = { ...payload };
+
+  if (typeof normalized.email === 'string') normalized.email = normalized.email.trim().toLowerCase();
+  if (typeof normalized.password === 'string') normalized.password = normalized.password.trim();
+  if (typeof normalized.notes === 'string') normalized.notes = normalized.notes.trim() || '';
+  if (typeof normalized.assignedPartner === 'string') normalized.assignedPartner = normalized.assignedPartner.trim() || null;
+  if (normalized.purchasePrice !== undefined) normalized.purchasePrice = Number(normalized.purchasePrice);
+
+  return normalized;
+}
+
 // GET /api/accounts?service=Netflix
 router.get('/', async (req, res, next) => {
   try {
@@ -59,9 +71,12 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/accounts
 router.post('/', async (req, res, next) => {
   try {
-    const { service, type, email, password, purchasePrice, assignedPartner, notes } = req.body;
+    const { service, type, email, password, purchasePrice, assignedPartner, notes } = normalizeOptionalAccountFields(req.body);
     if (!service || !type || !email || !password || purchasePrice === undefined) {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
+    }
+    if (Number.isNaN(purchasePrice)) {
+      return res.status(400).json({ success: false, message: 'Prix d\'achat invalide' });
     }
     const account = await Account.create({ service, type, email, password, purchasePrice, assignedPartner, notes });
     res.status(201).json({ success: true, data: account });
@@ -73,7 +88,10 @@ router.post('/', async (req, res, next) => {
 // PUT /api/accounts/:id
 router.put('/:id', async (req, res, next) => {
   try {
-    const { email, password, purchasePrice, assignedPartner, notes, isActive } = req.body;
+    const { email, password, purchasePrice, assignedPartner, notes, isActive } = normalizeOptionalAccountFields(req.body);
+    if (purchasePrice !== undefined && Number.isNaN(purchasePrice)) {
+      return res.status(400).json({ success: false, message: 'Prix d\'achat invalide' });
+    }
     const account = await Account.findByIdAndUpdate(
       req.params.id,
       { $set: { email, password, purchasePrice, assignedPartner, notes, isActive } },
