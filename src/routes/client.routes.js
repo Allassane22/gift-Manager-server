@@ -7,6 +7,16 @@ const Subscription = require('../models/Subscription');
 
 router.use(protect);
 
+function normalizeOptionalClientFields(payload = {}) {
+  const normalized = { ...payload };
+
+  if (typeof normalized.email === 'string') normalized.email = normalized.email.trim() || null;
+  if (typeof normalized.notes === 'string') normalized.notes = normalized.notes.trim() || '';
+  if (typeof normalized.referredBy === 'string') normalized.referredBy = normalized.referredBy.trim() || null;
+
+  return normalized;
+}
+
 // GET /api/clients — avec abonnements populés
 router.get('/', ownDataOnly, async (req, res, next) => {
   try {
@@ -57,7 +67,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/clients
 router.post('/', restrict('admin'), async (req, res, next) => {
   try {
-    const { name, phone, email, notes, referredBy } = req.body;
+    const { name, phone, email, notes, referredBy } = normalizeOptionalClientFields(req.body);
     if (!name || !phone) return res.status(400).json({ success: false, message: 'Nom et téléphone requis' });
     const client = await Client.create({ name, phone, email, notes, referredBy });
     res.status(201).json({ success: true, data: client });
@@ -67,10 +77,10 @@ router.post('/', restrict('admin'), async (req, res, next) => {
 // PUT /api/clients/:id
 router.put('/:id', restrict('admin'), async (req, res, next) => {
   try {
-    const { name, phone, email, notes } = req.body;
+    const { name, phone, email, notes, referredBy } = normalizeOptionalClientFields(req.body);
     const client = await Client.findByIdAndUpdate(
       req.params.id,
-      { $set: { name, phone, email, notes } },
+      { $set: { name, phone, email, notes, referredBy } },
       { new: true, runValidators: true }
     );
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
