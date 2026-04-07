@@ -41,12 +41,18 @@ router.get('/', async (req, res, next) => {
     // Enrichir avec infos profils
     const enriched = await Promise.all(accounts.map(async (acc) => {
       const profiles = await Profile.find({ accountId: acc._id, isActive: true });
-      const usedSlots = profiles.filter(p => p.assignedClients.length > 0 && !p.isFreeTrial).length;
+      const usedSlots = profiles.filter((profile) => {
+        const assignedClients = Array.isArray(profile.assignedClients)
+          ? profile.assignedClients
+          : [];
+        return assignedClients.length > 0 && !profile.isFreeTrial;
+      }).length;
+      const maxSlots = Number.isFinite(acc.maxSlots) ? acc.maxSlots : 0;
       return {
         ...acc.toJSON(),
         profiles,
         usedSlots,
-        freeSlots: acc.maxSlots - usedSlots,
+        freeSlots: Math.max(maxSlots - usedSlots, 0),
       };
     }));
 
