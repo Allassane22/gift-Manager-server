@@ -19,15 +19,36 @@ const partnerRoutes = require("./routes/partner.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 
 const app = express();
+const defaultAllowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+const configuredOrigins = [process.env.FRONTEND_URL, process.env.FRONTEND_URLS]
+  .filter(Boolean)
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...configuredOrigins])];
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origine non autorisee par CORS: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
+};
 
 // ─── Sécurité ────────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true,
-  }),
-);
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -95,6 +116,7 @@ connectDB()
       console.log(`\n🚀 DigiResell API démarrée sur le port ${PORT}`);
       console.log(`📊 Environnement: ${process.env.NODE_ENV}`);
       console.log(`🔗 URL: http://localhost:${PORT}/api/health\n`);
+      console.log("Origines CORS autorisees:", allowedOrigins.join(", "));
       startCronJobs();
     });
   })
