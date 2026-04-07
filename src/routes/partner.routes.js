@@ -7,6 +7,17 @@ const Subscription = require("../models/Subscription");
 
 router.use(protect, restrict("admin"));
 
+function normalizePartnerFields(payload = {}) {
+  const normalized = { ...payload };
+
+  if (typeof normalized.name === "string") normalized.name = normalized.name.trim();
+  if (typeof normalized.email === "string") normalized.email = normalized.email.trim().toLowerCase();
+  if (typeof normalized.phone === "string") normalized.phone = normalized.phone.trim() || "";
+  if (typeof normalized.password === "string") normalized.password = normalized.password.trim();
+
+  return normalized;
+}
+
 // GET /api/partners
 router.get("/", async (req, res, next) => {
   try {
@@ -55,7 +66,7 @@ router.get("/:id/stats", async (req, res, next) => {
 // POST /api/partners (créer un compte partenaire)
 router.post("/", async (req, res, next) => {
   try {
-    const { name, email, password, phone } = req.body;
+    const { name, email, password, phone } = normalizePartnerFields(req.body);
     if (!name || !email || !password) {
       return res
         .status(400)
@@ -85,7 +96,7 @@ router.post("/", async (req, res, next) => {
 // PUT /api/partners/:id
 router.put("/:id", async (req, res, next) => {
   try {
-    const { name, phone, isActive, email, password } = req.body;
+    const { name, phone, isActive, email, password } = normalizePartnerFields(req.body);
     const update = { $set: { name, phone, isActive, email } };
     const partner = await User.findByIdAndUpdate(req.params.id, update, {
       new: true,
