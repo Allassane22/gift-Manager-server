@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const { protect } = require('../middleware/auth.middleware');
 const { restrict, ownDataOnly } = require('../middleware/rbac.middleware');
 const { createSubscription, renewSubscription, migrateSubscription } = require('../services/allocation.service');
@@ -30,6 +31,12 @@ function normalizeSubscriptionFields(payload = {}) {
   if (typeof normalized.reason === 'string') normalized.reason = normalized.reason.trim() || '';
 
   return normalized;
+}
+
+function ensureValidObjectId(id, label = 'Identifiant invalide') {
+  return mongoose.isValidObjectId(id)
+    ? null
+    : { success: false, message: label };
 }
 
 // ─── GET /api/subscriptions ───────────────────────────────────────────────────
@@ -89,6 +96,9 @@ router.get('/', ownDataOnly, async (req, res, next) => {
 // ─── GET /api/subscriptions/:id ───────────────────────────────────────────────
 router.get('/:id', async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID d\'abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const sub = await Subscription.findById(req.params.id)
       .populate('clientId', 'name phone email')
       .populate('accountId', 'service type email password')
@@ -122,7 +132,7 @@ router.post('/', restrict('admin'), async (req, res, next) => {
       commissionType, commissionValue,
     } = normalizeSubscriptionFields(req.body);
 
-    if (!clientId || !service || !endDate || !purchasePrice || !pricePaid) {
+    if (!clientId || !service || !endDate || purchasePrice === undefined || purchasePrice === null || pricePaid === undefined || pricePaid === null) {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
     }
     if ([purchasePrice, pricePaid, commissionValue].some((value) => value !== null && value !== undefined && Number.isNaN(value))) {
@@ -148,6 +158,9 @@ router.post('/', restrict('admin'), async (req, res, next) => {
 // ─── PATCH /api/subscriptions/:id/renew ──────────────────────────────────────
 router.patch('/:id/renew', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID d\'abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const { newEndDate, newPricePaid } = normalizeSubscriptionFields(req.body);
     if (!newEndDate) return res.status(400).json({ success: false, message: 'Nouvelle date requise' });
     if (newPricePaid !== undefined && newPricePaid !== null && Number.isNaN(newPricePaid)) {
@@ -170,6 +183,9 @@ router.patch('/:id/renew', restrict('admin'), async (req, res, next) => {
 // ─── PATCH /api/subscriptions/:id/migrate ────────────────────────────────────
 router.patch('/:id/migrate', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID d\'abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const { newAccountId, newProfileId, reason } = normalizeSubscriptionFields({
       newAccountId: req.body.newAccountId,
       newProfileId: req.body.newProfileId,
@@ -177,6 +193,9 @@ router.patch('/:id/migrate', restrict('admin'), async (req, res, next) => {
     });
     if (!newAccountId || !newProfileId) {
       return res.status(400).json({ success: false, message: 'Nouveau compte et profil requis' });
+    }
+    if (!mongoose.isValidObjectId(newAccountId) || !mongoose.isValidObjectId(newProfileId)) {
+      return res.status(400).json({ success: false, message: 'IDs de migration invalides' });
     }
 
     const subscription = await migrateSubscription({
@@ -194,6 +213,9 @@ router.patch('/:id/migrate', restrict('admin'), async (req, res, next) => {
 // ─── PATCH /api/subscriptions/:id/status ─────────────────────────────────────
 router.patch('/:id/status', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID d\'abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const { status } = req.body;
     const allowed = ['active', 'suspended', 'cancelled'];
     if (!allowed.includes(status)) {
@@ -216,6 +238,9 @@ router.patch('/:id/status', restrict('admin'), async (req, res, next) => {
 // ─── DELETE /api/subscriptions/:id (soft delete) ─────────────────────────────
 router.delete('/:id', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID d\'abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const sub = await Subscription.findByIdAndUpdate(
       req.params.id,
       { $set: { deletedAt: new Date(), status: 'cancelled' } },

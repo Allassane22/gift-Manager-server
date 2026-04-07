@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const { protect } = require('../middleware/auth.middleware');
 const { restrict, ownDataOnly } = require('../middleware/rbac.middleware');
 const Client = require('../models/Client');
@@ -15,6 +16,12 @@ function normalizeOptionalClientFields(payload = {}) {
   if (typeof normalized.referredBy === 'string') normalized.referredBy = normalized.referredBy.trim() || null;
 
   return normalized;
+}
+
+function ensureValidObjectId(id, label = 'Identifiant invalide') {
+  return mongoose.isValidObjectId(id)
+    ? null
+    : { success: false, message: label };
 }
 
 // GET /api/clients — avec abonnements populés
@@ -53,6 +60,9 @@ router.get('/', ownDataOnly, async (req, res, next) => {
 // GET /api/clients/:id
 router.get('/:id', async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const client = await Client.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
     const subscriptions = await Subscription.find({ clientId: req.params.id, deletedAt: null })
@@ -77,6 +87,9 @@ router.post('/', restrict('admin'), async (req, res, next) => {
 // PUT /api/clients/:id
 router.put('/:id', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const { name, phone, email, notes, referredBy } = normalizeOptionalClientFields(req.body);
     const client = await Client.findByIdAndUpdate(
       req.params.id,
@@ -91,6 +104,9 @@ router.put('/:id', restrict('admin'), async (req, res, next) => {
 // DELETE /api/clients/:id
 router.delete('/:id', restrict('admin'), async (req, res, next) => {
   try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+
     const client = await Client.findByIdAndUpdate(req.params.id, { $set: { deletedAt: new Date() } }, { new: true });
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
     res.json({ success: true, message: 'Client supprimé' });
