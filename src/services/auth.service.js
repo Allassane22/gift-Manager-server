@@ -1,6 +1,9 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const User = require('../models/User');
 const AuditLog = require('../models/AuditLog');
+
+const BCRYPT_ROUNDS = 10;
 
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ id: userId }, process.env.JWT_ACCESS_SECRET, {
@@ -26,12 +29,11 @@ const login = async ({ email, password, ip, userAgent }) => {
 
   const { accessToken, refreshToken } = generateTokens(user._id);
 
-  // Sauvegarder refresh token hashé
-  user.refreshToken = refreshToken;
+  // ✅ Stocker le hash du refreshToken, jamais le token brut
+  user.refreshToken = await bcrypt.hash(refreshToken, BCRYPT_ROUNDS);
   user.lastLoginAt = new Date();
   await user.save({ validateBeforeSave: false });
 
-  // Audit log
   await AuditLog.create({
     userId: user._id,
     action: 'LOGIN',
@@ -42,7 +44,7 @@ const login = async ({ email, password, ip, userAgent }) => {
 
   return {
     accessToken,
-    refreshToken,
+    refreshToken, // on retourne le token brut au client (cookie/mémoire), jamais le hash
     user: {
       id: user._id,
       name: user.name,
@@ -64,12 +66,20 @@ const refreshTokens = async (token) => {
   }
 
   const user = await User.findById(decoded.id).select('+refreshToken');
-  if (!user || user.refreshToken !== token) {
+  if (!user || !user.refreshToken) {
+    throw { status: 401, message: 'Refresh token révoqué' };
+  }
+
+  // ✅ Comparer le token brut avec le hash stocké en base
+  const isMatch = await bcrypt.compare(token, user.refreshToken);
+  if (!isMatch) {
     throw { status: 401, message: 'Refresh token révoqué' };
   }
 
   const { accessToken, refreshToken } = generateTokens(user._id);
-  user.refreshToken = refreshToken;
+
+  // ✅ Rotation : on hash et on stocke le nouveau token
+  user.refreshToken = await bcrypt.hash(refreshToken, BCRYPT_ROUNDS);
   await user.save({ validateBeforeSave: false });
 
   return { accessToken, refreshToken };

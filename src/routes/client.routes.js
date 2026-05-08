@@ -5,6 +5,7 @@ const { protect } = require('../middleware/auth.middleware');
 const { restrict, ownDataOnly } = require('../middleware/rbac.middleware');
 const Client = require('../models/Client');
 const Subscription = require('../models/Subscription');
+const Profile = require('../models/Profile');
 
 router.use(protect);
 
@@ -24,7 +25,7 @@ function ensureValidObjectId(id, label = 'Identifiant invalide') {
     : { success: false, message: label };
 }
 
-// GET /api/clients — avec abonnements populés
+// GET /api/clients
 router.get('/', ownDataOnly, async (req, res, next) => {
   try {
     const { search, page = 1, limit = 50 } = req.query;
@@ -42,16 +43,17 @@ router.get('/', ownDataOnly, async (req, res, next) => {
       .skip((page - 1) * limit)
       .limit(Number(limit));
 
-    // Populer les abonnements pour chaque client
     const clientsWithSubs = await Promise.all(clients.map(async (client) => {
       const subscriptions = await Subscription.find({ clientId: client._id, deletedAt: null })
         .populate('accountId', 'service type email password')
         .populate('profileId', 'name pin')
         .populate('partnerId', 'name')
         .sort({ endDate: 1 });
-      return { ...client.toJSON(), subscriptions };
+ 
+      const refreshed = await refreshStatusBatch(subscriptions);
+      return { ...client.toJSON(), subscriptions: refreshed };
     }));
-
+ 
     const total = await Client.countDocuments(filter);
     res.json({ success: true, data: clientsWithSubs, pagination: { page: Number(page), total } });
   } catch (err) { next(err); }
@@ -62,15 +64,20 @@ router.get('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
     if (invalidId) return res.status(400).json(invalidId);
-
+ 
     const client = await Client.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
+ 
     const subscriptions = await Subscription.find({ clientId: req.params.id, deletedAt: null })
       .populate('accountId', 'service type email password')
       .populate('profileId', 'name pin')
       .populate('partnerId', 'name')
       .sort({ endDate: 1 });
-    res.json({ success: true, data: { ...client.toJSON(), subscriptions } });
+ 
+    
+    const refreshed = await refreshStatusBatch(subscriptions);
+ 
+    res.json({ success: true, data: { ...client.toJSON(), subscriptions: refreshed } });
   } catch (err) { next(err); }
 });
 
@@ -102,14 +109,35 @@ router.put('/:id', restrict('admin'), async (req, res, next) => {
 });
 
 // DELETE /api/clients/:id
+// FIX B5 : soft-delete des abonnements actifs + retrait du clientId dans Profile.assignedClients
 router.delete('/:id', restrict('admin'), async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
     if (invalidId) return res.status(400).json(invalidId);
 
-    const client = await Client.findByIdAndUpdate(req.params.id, { $set: { deletedAt: new Date() } }, { new: true });
+    const client = await Client.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
-    res.json({ success: true, message: 'Client supprimé' });
+
+    const clientId = client._id;
+    const now = new Date();
+
+    // 1. Soft-delete tous les abonnements actifs du client
+    await Subscription.updateMany(
+      { clientId, deletedAt: null },
+      { $set: { deletedAt: now, status: 'cancelled' } }
+    );
+
+    // 2. Retirer le clientId de tous les profils qui l'ont assigné
+    await Profile.updateMany(
+      { assignedClients: clientId },
+      { $pull: { assignedClients: clientId } }
+    );
+
+    // 3. Soft-delete le client
+    client.deletedAt = now;
+    await client.save();
+
+    res.json({ success: true, message: 'Client supprimé, abonnements annulés et profils libérés' });
   } catch (err) { next(err); }
 });
 

@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const { protect } = require('../middleware/auth.middleware');
 const { restrict } = require('../middleware/rbac.middleware');
 const Profile = require('../models/Profile');
+const Subscription = require('../models/Subscription');
 
 router.use(protect, restrict('admin'));
 
@@ -72,13 +73,29 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // DELETE /api/profiles/:id
+// FIX B6 : soft-delete des abonnements liés au profil supprimé
 router.delete('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de profil invalide');
     if (invalidId) return res.status(400).json(invalidId);
 
-    await Profile.findByIdAndUpdate(req.params.id, { $set: { deletedAt: new Date(), isActive: false } });
-    res.json({ success: true, message: 'Profil supprimé' });
+    const profile = await Profile.findById(req.params.id);
+    if (!profile) return res.status(404).json({ success: false, message: 'Profil introuvable' });
+
+    const now = new Date();
+
+    // 1. Soft-delete tous les abonnements liés à ce profil
+    await Subscription.updateMany(
+      { profileId: profile._id, deletedAt: null },
+      { $set: { deletedAt: now, status: 'cancelled' } }
+    );
+
+    // 2. Soft-delete le profil
+    await Profile.findByIdAndUpdate(req.params.id, {
+      $set: { deletedAt: now, isActive: false },
+    });
+
+    res.json({ success: true, message: 'Profil supprimé et abonnements liés annulés' });
   } catch (err) { next(err); }
 });
 

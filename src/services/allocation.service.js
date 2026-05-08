@@ -11,7 +11,6 @@ const AuditLog = require('../models/AuditLog');
  * pour un service donné (load balancing)
  */
 const findAvailableSlot = async (service, preferredAccountId = null) => {
-  // 1. Trouver tous les comptes actifs du service
   const accounts = await Account.find({
     service,
     isActive: true,
@@ -25,7 +24,6 @@ const findAvailableSlot = async (service, preferredAccountId = null) => {
     throw { status: 404, message: `Aucun compte ${service} disponible` };
   }
 
-  // 2. Pour chaque compte, trouver les profils libres
   let bestAccount = null;
   let bestProfile = null;
   let bestLoadRatio = Infinity;
@@ -57,14 +55,21 @@ const findAvailableSlot = async (service, preferredAccountId = null) => {
 };
 
 /**
- * Création d'un abonnement avec transaction atomique
- * profit + commission calculés automatiquement
+ * Création d'un abonnement SANS transaction (Atlas M0 incompatible).
+ * Rollback manuel en cas d'erreur à mi-chemin.
+ * Ordre des opérations :
+ *   1. Trouver le slot
+ *   2. Créer l'abonnement
+ *   3. Assigner le client au profil  → rollback: supprimer l'abonnement
+ *   4. Màj stats client              → rollback: désassigner + supprimer
+ *   5. Màj stats partenaire          → rollback: décrémenter + désassigner + supprimer
+ *   6. Audit log (best-effort, pas de rollback)
  */
 const createSubscription = async ({
   clientId,
   service,
-  accountId,         // optionnel : forcer un compte précis
-  profileId,         // optionnel : forcer un profil précis
+  accountId,
+  profileId,
   partnerId,
   startDate,
   endDate,
@@ -74,26 +79,26 @@ const createSubscription = async ({
   commissionValue = 0,
   doneBy,
 }) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // ── 1. Trouver le slot ────────────────────────────────────────────────────
+  let account, profile;
 
-  try {
-    // A. Trouver le slot si non précisé
-    let account, profile;
-    if (profileId && accountId) {
-      account = await Account.findById(accountId).session(session);
-      profile = await Profile.findById(profileId).session(session);
-      if (!profile || profile.assignedClients.length > 0) {
-        throw { status: 409, message: 'Ce profil est déjà occupé' };
-      }
-    } else {
-      const slot = await findAvailableSlot(service, accountId);
-      account = slot.account;
-      profile = slot.profile;
+  if (profileId && accountId) {
+    account = await Account.findById(accountId);
+    profile = await Profile.findById(profileId);
+    if (!account) throw { status: 404, message: 'Compte introuvable' };
+    if (!profile || profile.assignedClients.length > 0) {
+      throw { status: 409, message: 'Ce profil est déjà occupé' };
     }
+  } else {
+    const slot = await findAvailableSlot(service, accountId);
+    account = slot.account;
+    profile = slot.profile;
+  }
 
-    // B. Créer l'abonnement (profit auto-calculé dans le pre-save)
-    const [subscription] = await Subscription.create([{
+  // ── 2. Créer l'abonnement ─────────────────────────────────────────────────
+  let subscription;
+  try {
+    subscription = await Subscription.create({
       clientId,
       accountId: account._id,
       profileId: profile._id,
@@ -105,68 +110,84 @@ const createSubscription = async ({
       commissionType,
       commissionValue,
       status: 'active',
-    }], { session });
-
-    // C. Assigner le client au profil
-    profile.assignedClients.push(clientId);
-    await profile.save({ session });
-
-    // D. Mettre à jour stats client (atomique)
-    await Client.findByIdAndUpdate(
-      clientId,
-      {
-        $inc: { totalPaid: pricePaid, totalSubscriptions: 1 },
-      },
-      { session }
-    );
-
-    // E. Mettre à jour stats partenaire si applicable
-    if (partnerId) {
-      await User.findByIdAndUpdate(
-        partnerId,
-        {
-          $inc: {
-            totalRevenue: pricePaid,
-            totalCommission: subscription.commissionAmount,
-            totalSubscriptions: 1,
-          },
-        },
-        { session }
-      );
-    }
-
-    // F. Audit log
-    await AuditLog.create([{
-      userId: doneBy,
-      action: 'CREATE_SUBSCRIPTION',
-      targetModel: 'Subscription',
-      targetId: subscription._id,
-      details: {
-        service,
-        accountId: account._id,
-        profileId: profile._id,
-        profit: subscription.profit,
-      },
-    }], { session });
-
-    await session.commitTransaction();
-
-    return subscription;
-
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
+    });
+  } catch (err) {
+    throw err; // rien à annuler
   }
+
+  // ── 3. Assigner le client au profil ───────────────────────────────────────
+  try {
+    profile.assignedClients.push(clientId);
+    await profile.save();
+  } catch (err) {
+    // Rollback : supprimer l'abonnement créé
+    await Subscription.findByIdAndDelete(subscription._id).catch(() => {});
+    throw { status: 500, message: 'Erreur assignation profil, abonnement annulé', detail: err.message };
+  }
+
+  // ── 4. Màj stats client ───────────────────────────────────────────────────
+  try {
+    await Client.findByIdAndUpdate(clientId, {
+      $inc: { totalPaid: pricePaid, totalSubscriptions: 1 },
+    });
+  } catch (err) {
+    // Rollback : désassigner le profil + supprimer l'abonnement
+    await Profile.findByIdAndUpdate(profile._id, {
+      $pull: { assignedClients: clientId },
+    }).catch(() => {});
+    await Subscription.findByIdAndDelete(subscription._id).catch(() => {});
+    throw { status: 500, message: 'Erreur màj stats client, abonnement annulé', detail: err.message };
+  }
+
+  // ── 5. Màj stats partenaire ───────────────────────────────────────────────
+  if (partnerId) {
+    try {
+      await User.findByIdAndUpdate(partnerId, {
+        $inc: {
+          totalRevenue: pricePaid,
+          totalCommission: subscription.commissionAmount,
+          totalSubscriptions: 1,
+        },
+      });
+    } catch (err) {
+      // Rollback : décrémenter stats client + désassigner profil + supprimer abonnement
+      await Client.findByIdAndUpdate(clientId, {
+        $inc: { totalPaid: -pricePaid, totalSubscriptions: -1 },
+      }).catch(() => {});
+      await Profile.findByIdAndUpdate(profile._id, {
+        $pull: { assignedClients: clientId },
+      }).catch(() => {});
+      await Subscription.findByIdAndDelete(subscription._id).catch(() => {});
+      throw { status: 500, message: 'Erreur màj stats partenaire, abonnement annulé', detail: err.message };
+    }
+  }
+
+  // ── 6. Audit log (best-effort) ────────────────────────────────────────────
+  await AuditLog.create({
+    userId: doneBy,
+    action: 'CREATE_SUBSCRIPTION',
+    targetModel: 'Subscription',
+    targetId: subscription._id,
+    details: {
+      service,
+      accountId: account._id,
+      profileId: profile._id,
+      profit: subscription.profit,
+    },
+  }).catch(() => {}); // échec silencieux pour ne pas bloquer la réponse
+
+  return subscription;
 };
 
 /**
- * Renouveler un abonnement existant
+ * Renouveler un abonnement existant.
+ * FIX B8 : met à jour Client.totalPaid et les stats partenaire.
  */
 const renewSubscription = async ({ subscriptionId, newEndDate, newPricePaid, doneBy }) => {
   const subscription = await Subscription.findById(subscriptionId);
   if (!subscription) throw { status: 404, message: 'Abonnement introuvable' };
+
+  const oldPricePaid = subscription.pricePaid;
 
   subscription.history.push({
     action: 'renewed',
@@ -180,58 +201,94 @@ const renewSubscription = async ({ subscriptionId, newEndDate, newPricePaid, don
   subscription.status = 'active';
 
   await subscription.save();
+
+  // ── Màj stats client ──────────────────────────────────────────────────────
+  const amountToAdd = newPricePaid !== undefined ? newPricePaid : oldPricePaid;
+  await Client.findByIdAndUpdate(subscription.clientId, {
+    $inc: { totalPaid: amountToAdd },
+  }).catch(() => {});
+
+  // ── Màj stats partenaire ──────────────────────────────────────────────────
+  if (subscription.partnerId) {
+    await User.findByIdAndUpdate(subscription.partnerId, {
+      $inc: {
+        totalRevenue: amountToAdd,
+        totalCommission: subscription.commissionAmount,
+      },
+    }).catch(() => {});
+  }
+
   return subscription;
 };
 
 /**
- * Migrer un client vers un autre compte/profil
+ * Migrer un client vers un autre compte/profil SANS transaction (Atlas M0).
+ * Rollback manuel en cas d'erreur.
+ * Ordre :
+ *   1. Vérifier subscription + nouveau profil
+ *   2. Libérer l'ancien profil
+ *   3. Assigner au nouveau profil  → rollback: réassigner l'ancien
+ *   4. Màj subscription            → rollback: désassigner nouveau + réassigner ancien
  */
 const migrateSubscription = async ({ subscriptionId, newAccountId, newProfileId, reason, doneBy }) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // ── 1. Vérifications ──────────────────────────────────────────────────────
+  const subscription = await Subscription.findById(subscriptionId);
+  if (!subscription) throw { status: 404, message: 'Abonnement introuvable' };
 
+  const newProfile = await Profile.findById(newProfileId);
+  if (!newProfile || !newProfile.isAvailable) {
+    throw { status: 409, message: 'Nouveau profil indisponible' };
+  }
+
+  const oldProfileId = subscription.profileId;
+  const oldAccountId = subscription.accountId;
+  const clientId = subscription.clientId;
+
+  // ── 2. Libérer l'ancien profil ────────────────────────────────────────────
   try {
-    const subscription = await Subscription.findById(subscriptionId).session(session);
-    if (!subscription) throw { status: 404, message: 'Abonnement introuvable' };
+    await Profile.findByIdAndUpdate(oldProfileId, {
+      $pull: { assignedClients: clientId },
+    });
+  } catch (err) {
+    throw { status: 500, message: 'Erreur libération ancien profil', detail: err.message };
+  }
 
-    const newProfile = await Profile.findById(newProfileId).session(session);
-    if (!newProfile || !newProfile.isAvailable) {
-      throw { status: 409, message: 'Nouveau profil indisponible' };
-    }
+  // ── 3. Assigner au nouveau profil ─────────────────────────────────────────
+  try {
+    newProfile.assignedClients.push(clientId);
+    await newProfile.save();
+  } catch (err) {
+    // Rollback : réassigner l'ancien profil
+    await Profile.findByIdAndUpdate(oldProfileId, {
+      $push: { assignedClients: clientId },
+    }).catch(() => {});
+    throw { status: 500, message: 'Erreur assignation nouveau profil', detail: err.message };
+  }
 
-    // Libérer l'ancien profil
-    await Profile.findByIdAndUpdate(
-      subscription.profileId,
-      { $pull: { assignedClients: subscription.clientId } },
-      { session }
-    );
-
-    // Assigner au nouveau
-    newProfile.assignedClients.push(subscription.clientId);
-    await newProfile.save({ session });
-
-    // Historique
+  // ── 4. Màj subscription ───────────────────────────────────────────────────
+  try {
     subscription.history.push({
       action: 'migrated',
-      fromAccountId: subscription.accountId,
-      fromProfileId: subscription.profileId,
+      fromAccountId: oldAccountId,
+      fromProfileId: oldProfileId,
       note: reason || 'Migration de compte',
       doneBy,
     });
-
     subscription.accountId = newAccountId;
     subscription.profileId = newProfileId;
-    await subscription.save({ session });
-
-    await session.commitTransaction();
-    return subscription;
-
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
+    await subscription.save();
+  } catch (err) {
+    // Rollback : désassigner nouveau profil + réassigner ancien
+    await Profile.findByIdAndUpdate(newProfileId, {
+      $pull: { assignedClients: clientId },
+    }).catch(() => {});
+    await Profile.findByIdAndUpdate(oldProfileId, {
+      $push: { assignedClients: clientId },
+    }).catch(() => {});
+    throw { status: 500, message: 'Erreur màj abonnement lors de la migration', detail: err.message };
   }
+
+  return subscription;
 };
 
 module.exports = { findAvailableSlot, createSubscription, renewSubscription, migrateSubscription };

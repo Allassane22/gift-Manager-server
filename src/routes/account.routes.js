@@ -5,6 +5,7 @@ const { protect } = require('../middleware/auth.middleware');
 const { restrict } = require('../middleware/rbac.middleware');
 const Account = require('../models/Account');
 const Profile = require('../models/Profile');
+const Subscription = require('../models/Subscription');
 const { findAvailableSlot } = require('../services/allocation.service');
 
 router.use(protect, restrict('admin'));
@@ -38,13 +39,10 @@ router.get('/', async (req, res, next) => {
       .populate('assignedPartner', 'name email')
       .sort({ service: 1, type: 1 });
 
-    // Enrichir avec infos profils
     const enriched = await Promise.all(accounts.map(async (acc) => {
       const profiles = await Profile.find({ accountId: acc._id, isActive: true });
       const usedSlots = profiles.filter((profile) => {
-        const assignedClients = Array.isArray(profile.assignedClients)
-          ? profile.assignedClients
-          : [];
+        const assignedClients = Array.isArray(profile.assignedClients) ? profile.assignedClients : [];
         return assignedClients.length > 0 && !profile.isFreeTrial;
       }).length;
       const maxSlots = Number.isFinite(acc.maxSlots) ? acc.maxSlots : 0;
@@ -61,9 +59,7 @@ router.get('/', async (req, res, next) => {
       : enriched;
 
     res.json({ success: true, data: result });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // POST /api/accounts
@@ -74,13 +70,11 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
     }
     if (Number.isNaN(purchasePrice)) {
-      return res.status(400).json({ success: false, message: 'Prix d\'achat invalide' });
+      return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
     const account = await Account.create({ service, type, email, password, purchasePrice, assignedPartner, notes });
     res.status(201).json({ success: true, data: account });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // GET /api/accounts/available/:service
@@ -88,9 +82,7 @@ router.get('/available/:service', async (req, res, next) => {
   try {
     const slot = await findAvailableSlot(req.params.service);
     res.json({ success: true, data: slot });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // GET /api/accounts/:id
@@ -106,9 +98,7 @@ router.get('/:id', async (req, res, next) => {
       .populate('assignedClients', 'name phone');
 
     res.json({ success: true, data: { ...account.toJSON(), profiles } });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // PUT /api/accounts/:id
@@ -119,7 +109,7 @@ router.put('/:id', async (req, res, next) => {
 
     const { email, password, purchasePrice, assignedPartner, notes, isActive } = normalizeOptionalAccountFields(req.body);
     if (purchasePrice !== undefined && Number.isNaN(purchasePrice)) {
-      return res.status(400).json({ success: false, message: 'Prix d\'achat invalide' });
+      return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
     const account = await Account.findByIdAndUpdate(
       req.params.id,
@@ -128,22 +118,46 @@ router.put('/:id', async (req, res, next) => {
     );
     if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
     res.json({ success: true, data: account });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // DELETE /api/accounts/:id
+// FIX B7 : cascade → soft-delete tous les profils du compte, puis tous les abonnements liés
 router.delete('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
     if (invalidId) return res.status(400).json(invalidId);
 
-    await Account.findByIdAndUpdate(req.params.id, { $set: { deletedAt: new Date(), isActive: false } });
-    res.json({ success: true, message: 'Compte désactivé' });
-  } catch (err) {
-    next(err);
-  }
+    const account = await Account.findById(req.params.id);
+    if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
+
+    const now = new Date();
+
+    // 1. Récupérer les IDs de tous les profils de ce compte
+    const profiles = await Profile.find({ accountId: account._id, deletedAt: null }, '_id');
+    const profileIds = profiles.map(p => p._id);
+
+    // 2. Soft-delete les abonnements liés à ces profils
+    if (profileIds.length > 0) {
+      await Subscription.updateMany(
+        { profileId: { $in: profileIds }, deletedAt: null },
+        { $set: { deletedAt: now, status: 'cancelled' } }
+      );
+    }
+
+    // 3. Soft-delete tous les profils du compte
+    await Profile.updateMany(
+      { accountId: account._id, deletedAt: null },
+      { $set: { deletedAt: now, isActive: false } }
+    );
+
+    // 4. Soft-delete le compte
+    await Account.findByIdAndUpdate(req.params.id, {
+      $set: { deletedAt: now, isActive: false },
+    });
+
+    res.json({ success: true, message: 'Compte désactivé, profils et abonnements liés annulés' });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

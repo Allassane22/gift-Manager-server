@@ -8,6 +8,7 @@ const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const { connectDB } = require("./config/database");
 const { startCronJobs } = require("./services/cron.service");
+const { refreshExpiredStatuses } = require("./services/status.service"); // ← B4/F3
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
@@ -25,27 +26,18 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   process.env.FRONTEND_URL,
-]
-  .filter(Boolean);
+].filter(Boolean);
 
 // ─── Sécurité ────────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  }),
-);
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Trop de requêtes, réessayez dans 15 minutes.",
-  },
+  message: { success: false, message: "Trop de requêtes, réessayez dans 15 minutes." },
 });
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -70,8 +62,11 @@ app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
-// Health check
-app.get("/api/health", (req, res) => {
+// ─── Health check (B4/F3) ─────────────────────────────────────────────────────
+// À chaque hit (ex: self-ping toutes les 14 min), on recalcule les statuts expirés.
+// refreshExpiredStatuses() a son propre garde MIN_INTERVAL_MS=5min, pas de risque d'abus.
+app.get("/api/health", async (req, res) => {
+  await refreshExpiredStatuses(); // fire-and-forget sécurisé (la fn gère ses erreurs)
   res.json({
     success: true,
     message: "DigiResell API opérationnelle",
@@ -104,12 +99,34 @@ connectDB()
       console.log(`📊 Environnement: ${process.env.NODE_ENV}`);
       console.log(`🔗 URL: http://localhost:${PORT}/api/health\n`);
       startCronJobs();
+
+      // ─── Self-ping anti-sleep (B4/F3) ──────────────────────────────────────
+      // Render free tier endort le serveur après ~15 min d'inactivité.
+      // On se ping toutes les 14 min pour rester éveillé ET déclencher
+      // refreshExpiredStatuses() via /api/health.
+      if (
+        process.env.NODE_ENV === "production" &&
+        process.env.RENDER_EXTERNAL_URL
+      ) {
+        const https = require("https");
+        const PING_URL = `${process.env.RENDER_EXTERNAL_URL}/api/health`;
+
+        setInterval(() => {
+          https
+            .get(PING_URL, (res) => {
+              console.log(`[self-ping] ${PING_URL} → ${res.statusCode}`);
+            })
+            .on("error", (err) => {
+              console.error("[self-ping] Erreur:", err.message);
+            });
+        }, 14 * 60 * 1000); // toutes les 14 minutes
+
+        console.log(`🏓 Self-ping actif → ${PING_URL} (toutes les 14 min)`);
+      }
     });
   })
   .catch((err) => {
     console.error("Impossible de démarrer:", err);
     process.exit(1);
   });
-console.log("Ma chaine de connexion :", process.env.MONGODB_URI);
-
 module.exports = app;

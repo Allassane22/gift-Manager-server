@@ -2,20 +2,43 @@ const mongoose = require('mongoose');
 
 // Règles métier : slots max par service/type
 const SLOTS_CONFIG = {
-  Netflix: { Essentiel: 5, Premium: 1, Royal: 1 },
+  Netflix:       { Essentiel: 5, Premium: 1, Royal: 1 },
   'Prime Video': { Essentiel: 6, Premium: 1 },
-  PlayStation: { Standard: 2 },
+  Spotify:       { Family: 6, Étudiant: 1, Personnel: 1 },
+  'Apple Music': { Family: 6, Personnel: 1 },
+  'Snapchat+':   { Personnel: 1 },
+  PlayStation:   { Duo: 2, Personnel: 1 },
+  Xbox:          { Duo: 2, Personnel: 1 },
+  Nintendo:      { Personnel: 1, Duo: 2 },
 };
 
 const accountSchema = new mongoose.Schema({
   service: {
     type: String,
-    enum: ['Netflix', 'Prime Video', 'PlayStation'],
+    enum: [
+      'Netflix',
+      'Prime Video',
+      'Spotify',
+      'Apple Music',
+      'Snapchat+',
+      'PlayStation',
+      'Xbox',
+      'Nintendo',
+    ],
     required: [true, 'Service requis'],
   },
   type: {
     type: String,
-    enum: ['Essentiel', 'Premium', 'Royal', 'Standard'],
+    enum: [
+      'Essentiel',
+      'Premium',
+      'Royal',
+      'Standard',  // conservé pour rétrocompatibilité éventuelle
+      'Family',
+      'Étudiant',
+      'Personnel',
+      'Duo',
+    ],
     required: [true, 'Type requis'],
   },
   email: {
@@ -40,7 +63,7 @@ const accountSchema = new mongoose.Schema({
   },
   purchasePrice: {
     type: Number,
-    required: [true, 'Prix d\'achat requis'],
+    required: [true, "Prix d'achat requis"],
     min: 0,
   },
   notes: { type: String, trim: true },
@@ -56,7 +79,7 @@ const accountSchema = new mongoose.Schema({
 accountSchema.pre('save', function (next) {
   if (this.isModified('service') || this.isModified('type')) {
     const config = SLOTS_CONFIG[this.service];
-    if (!config || !config[this.type]) {
+    if (!config || config[this.type] === undefined) {
       return next(new Error(`Combinaison service/type invalide: ${this.service}/${this.type}`));
     }
     this.maxSlots = config[this.type];
@@ -64,7 +87,7 @@ accountSchema.pre('save', function (next) {
   next();
 });
 
-// Virtual: nombre de slots utilisés (calculé via populate)
+// Virtual: profils liés (slots utilisés calculés via populate)
 accountSchema.virtual('profiles', {
   ref: 'Profile',
   localField: '_id',
