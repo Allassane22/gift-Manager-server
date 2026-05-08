@@ -1,4 +1,5 @@
-Ad.env
-.env.local
+.env
+.env.loccal
 .env.production
 node_modules/
+README.MD
