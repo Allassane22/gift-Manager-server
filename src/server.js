@@ -27,12 +27,22 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "https://gift-manager-frontend.vercel.app",
+  "https://gift-manager-frontend-git-main-allassane22s-projects.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 // ─── Sécurité ────────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    console.warn(`[CORS] Origine bloquée: ${origin}`);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
