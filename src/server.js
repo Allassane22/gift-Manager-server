@@ -18,38 +18,46 @@ const profileRoutes = require("./routes/profile.routes");
 const subscriptionRoutes = require("./routes/subscription.routes");
 const partnerRoutes = require("./routes/partner.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
-const serviceConfigRoutes = require("./routes/serviceConfig.routes");         // ← Conv. A
-const whatsappTemplateRoutes = require("./routes/whatsappTemplate.routes");   // ← Conv. B
+const serviceConfigRoutes = require("./routes/serviceConfig.routes"); // ← Conv. A
+const whatsappTemplateRoutes = require("./routes/whatsappTemplate.routes"); // ← Conv. B
 
 const app = express();
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "https://gift-manager-frontend.vercel.app",
-  "https://gift-manager-frontend-git-main-allassane22s-projects.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 // ─── Sécurité ────────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.warn(`[CORS] Origine bloquée: ${origin}`);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      // Accepte toutes les URLs Vercel du projet
+      if (
+        allowedOrigins.includes(origin) ||
+        /https:\/\/gift-manager-frontend.*\.vercel\.app$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      console.warn(`[CORS] Origine bloquée: ${origin}`);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }),
+);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: "Trop de requêtes, réessayez dans 15 minutes." },
+  message: {
+    success: false,
+    message: "Trop de requêtes, réessayez dans 15 minutes.",
+  },
 });
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -73,7 +81,7 @@ app.use("/api/profiles", profileRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/service-configs", serviceConfigRoutes);       // ← Conv. A
+app.use("/api/service-configs", serviceConfigRoutes); // ← Conv. A
 app.use("/api/whatsapp-templates", whatsappTemplateRoutes); // ← Conv. B
 
 // ─── Health check (B4/F3) ─────────────────────────────────────────────────────
@@ -125,15 +133,18 @@ connectDB()
         const https = require("https");
         const PING_URL = `${process.env.RENDER_EXTERNAL_URL}/api/health`;
 
-        setInterval(() => {
-          https
-            .get(PING_URL, (res) => {
-              console.log(`[self-ping] ${PING_URL} → ${res.statusCode}`);
-            })
-            .on("error", (err) => {
-              console.error("[self-ping] Erreur:", err.message);
-            });
-        }, 14 * 60 * 1000); // toutes les 14 minutes
+        setInterval(
+          () => {
+            https
+              .get(PING_URL, (res) => {
+                console.log(`[self-ping] ${PING_URL} → ${res.statusCode}`);
+              })
+              .on("error", (err) => {
+                console.error("[self-ping] Erreur:", err.message);
+              });
+          },
+          14 * 60 * 1000,
+        ); // toutes les 14 minutes
 
         console.log(`🏓 Self-ping actif → ${PING_URL} (toutes les 14 min)`);
       }
