@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/auth.middleware');
 const { restrict } = require('../middleware/rbac.middleware');
 const Subscription = require('../models/Subscription');
+const Purchase = require('../models/Purchase');
 const Client = require('../models/Client');
 const Account = require('../models/Account');
 const User = require('../models/User');
@@ -161,6 +162,33 @@ router.get('/top-partners', async (req, res, next) => {
       .limit(10);
 
     res.json({ success: true, data: partners });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/dashboard/pending-proof
+// Retourne les abonnements et achats en attente de preuve de paiement
+router.get('/pending-proof', async (req, res, next) => {
+  try {
+    const [subscriptions, purchases] = await Promise.all([
+      Subscription.find({ status: 'pending_payment' })
+        .populate('clientId', 'name phone')
+        .populate('accountId', 'service type')
+        .sort({ createdAt: -1 }),
+      Purchase.find({ status: 'pending_payment' })
+        .populate('clientId', 'name phone')
+        .sort({ createdAt: -1 }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        subscriptions,
+        purchases,
+        total: subscriptions.length + purchases.length,
+      },
+    });
   } catch (err) {
     next(err);
   }

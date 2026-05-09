@@ -1,45 +1,16 @@
 const mongoose = require('mongoose');
-
-// Règles métier : slots max par service/type
-const SLOTS_CONFIG = {
-  Netflix:       { Essentiel: 5, Premium: 1, Royal: 1 },
-  'Prime Video': { Essentiel: 6, Premium: 1 },
-  Spotify:       { Family: 6, Étudiant: 1, Personnel: 1 },
-  'Apple Music': { Family: 6, Personnel: 1 },
-  'Snapchat+':   { Personnel: 1 },
-  PlayStation:   { Duo: 2, Personnel: 1 },
-  Xbox:          { Duo: 2, Personnel: 1 },
-  Nintendo:      { Personnel: 1, Duo: 2 },
-};
+const ServiceConfig = require('./ServiceConfig');
 
 const accountSchema = new mongoose.Schema({
   service: {
     type: String,
-    enum: [
-      'Netflix',
-      'Prime Video',
-      'Spotify',
-      'Apple Music',
-      'Snapchat+',
-      'PlayStation',
-      'Xbox',
-      'Nintendo',
-    ],
     required: [true, 'Service requis'],
+    trim: true,
   },
   type: {
     type: String,
-    enum: [
-      'Essentiel',
-      'Premium',
-      'Royal',
-      'Standard',  // conservé pour rétrocompatibilité éventuelle
-      'Family',
-      'Étudiant',
-      'Personnel',
-      'Duo',
-    ],
     required: [true, 'Type requis'],
+    trim: true,
   },
   email: {
     type: String,
@@ -75,14 +46,14 @@ const accountSchema = new mongoose.Schema({
   toObject: { virtuals: true },
 });
 
-// Calcul automatique de maxSlots selon service+type
-accountSchema.pre('save', function (next) {
+// Calcul automatique de maxSlots via ServiceConfig (dynamique, sans enum statique)
+accountSchema.pre('save', async function (next) {
   if (this.isModified('service') || this.isModified('type')) {
-    const config = SLOTS_CONFIG[this.service];
-    if (!config || config[this.type] === undefined) {
-      return next(new Error(`Combinaison service/type invalide: ${this.service}/${this.type}`));
+    try {
+      this.maxSlots = await ServiceConfig.getMaxSlots(this.service, this.type);
+    } catch (err) {
+      return next(err);
     }
-    this.maxSlots = config[this.type];
   }
   next();
 });
@@ -101,4 +72,3 @@ accountSchema.pre(/^find/, function (next) {
 });
 
 module.exports = mongoose.model('Account', accountSchema);
-module.exports.SLOTS_CONFIG = SLOTS_CONFIG;

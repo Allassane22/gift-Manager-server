@@ -18,6 +18,8 @@ const profileRoutes = require("./routes/profile.routes");
 const subscriptionRoutes = require("./routes/subscription.routes");
 const partnerRoutes = require("./routes/partner.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
+const serviceConfigRoutes = require("./routes/serviceConfig.routes");         // ← Conv. A
+const whatsappTemplateRoutes = require("./routes/whatsappTemplate.routes");   // ← Conv. B
 
 const app = express();
 const allowedOrigins = [
@@ -61,6 +63,8 @@ app.use("/api/profiles", profileRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/service-configs", serviceConfigRoutes);       // ← Conv. A
+app.use("/api/whatsapp-templates", whatsappTemplateRoutes); // ← Conv. B
 
 // ─── Health check (B4/F3) ─────────────────────────────────────────────────────
 // À chaque hit (ex: self-ping toutes les 14 min), on recalcule les statuts expirés.
@@ -129,4 +133,5 @@ connectDB()
     console.error("Impossible de démarrer:", err);
     process.exit(1);
   });
+
 module.exports = app;

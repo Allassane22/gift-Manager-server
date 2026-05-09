@@ -62,9 +62,15 @@ const subscriptionSchema = new mongoose.Schema({
   // Preuve de paiement
   paymentProofUrl: { type: String, default: null },
   // Statut
+  // pending_payment : abonnement créé, en attente de preuve de paiement client
+  // active          : paiement confirmé, accès actif
+  // overdue         : paiement en retard
+  // suspended       : accès suspendu manuellement
+  // expired         : date de fin dépassée
+  // cancelled       : résilié
   status: {
     type: String,
-    enum: ['active', 'overdue', 'suspended', 'expired', 'cancelled'],
+    enum: ['pending_payment', 'active', 'overdue', 'suspended', 'expired', 'cancelled'],
     default: 'active',
   },
   // Historique des modifications
