@@ -62,10 +62,17 @@ serviceConfigSchema.pre(/^find/, function (next) {
 });
 
 // ─── Méthode statique : récupère maxSlots pour un couple service/type ─────────
+// ✅ Correction : on retire le filtre isActive pour ne pas bloquer la création
+// si un service a isActive=false ou undefined. On vérifie juste que la combo existe.
 serviceConfigSchema.statics.getMaxSlots = async function (service, type) {
-  const config = await this.findOne({ service, type, isActive: true });
+  // Bypass le pre-find hook en utilisant findOne directement sur le modèle
+  // avec un filtre explicite deletedAt: null
+  const config = await this.findOne({ service, type, deletedAt: null });
   if (!config) {
-    throw new Error(`Combinaison service/type invalide ou inactive : ${service}/${type}`);
+    throw new Error(
+      `Combinaison service/type introuvable : ${service}/${type}. ` +
+      `Vérifiez que le catalogue a été initialisé via POST /api/service-configs/seed`
+    );
   }
   return config.maxSlots;
 };
