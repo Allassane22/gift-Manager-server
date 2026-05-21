@@ -32,15 +32,60 @@ const SEED_CATALOG = [
 ];
 
 // ─── GET /api/service-configs ─────────────────────────────────────────────────
-// Liste tous les services configs actifs (non supprimés)
+// Retourne les services GROUPÉS par nom de service.
+// Format de réponse :
+// [
+//   { service: "Netflix", types: [{ type, maxSlots, price, _id }, ...] },
+//   { service: "Spotify", types: [...] },
+// ]
+// Le frontend peut ainsi faire :
+//   const selectedConfig = configs.find(s => s.service === form.service)
+//   const types = selectedConfig.types  → [{ type, maxSlots, price }]
 router.get('/', async (req, res, next) => {
   try {
-    const { service, isActive } = req.query;
+    const { isActive } = req.query;
     const filter = {};
-    if (service) filter.service = service;
     if (isActive !== undefined) filter.isActive = isActive === 'true';
 
     const configs = await ServiceConfig.find(filter).sort({ service: 1, type: 1 });
+
+    // Grouper par service
+    const grouped = [];
+    const map = {};
+
+    configs.forEach((doc) => {
+      if (!map[doc.service]) {
+        map[doc.service] = {
+          service: doc.service,
+          icon: doc.icon || '',
+          color: doc.color || '',
+          isActive: doc.isActive,
+          types: [],
+        };
+        grouped.push(map[doc.service]);
+      }
+      map[doc.service].types.push({
+        _id: doc._id,
+        type: doc.type,
+        maxSlots: doc.maxSlots,
+        price: doc.price,
+        suggestedPrice: doc.price, // alias pour compatibilité frontend
+        currency: doc.currency,
+        description: doc.description,
+      });
+    });
+
+    res.json({ success: true, data: grouped });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /api/service-configs/flat ────────────────────────────────────────────
+// Retourne la liste plate (non groupée) — utile pour l'admin ServiceConfigPage
+router.get('/flat', async (req, res, next) => {
+  try {
+    const configs = await ServiceConfig.find({}).sort({ service: 1, type: 1 });
     res.json({ success: true, data: configs });
   } catch (err) {
     next(err);
@@ -65,17 +110,10 @@ router.post('/', async (req, res, next) => {
   try {
     const { service, type, maxSlots, price, currency, description, isActive } = req.body;
     const config = await ServiceConfig.create({
-      service,
-      type,
-      maxSlots,
-      price,
-      currency,
-      description,
-      isActive,
+      service, type, maxSlots, price, currency, description, isActive,
     });
     res.status(201).json({ success: true, data: config });
   } catch (err) {
-    // Doublon index unique
     if (err.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -118,8 +156,6 @@ router.put('/:id', async (req, res, next) => {
 // ─── DELETE /api/service-configs/:id (soft delete) ────────────────────────────
 router.delete('/:id', async (req, res, next) => {
   try {
-    // On contourne le pre-find qui filtre deletedAt=null pour pouvoir trouver
-    // un doc déjà supprimé et retourner un 404 propre
     const config = await ServiceConfig.findOneAndUpdate(
       { _id: req.params.id, deletedAt: null },
       { $set: { deletedAt: new Date(), isActive: false } },
@@ -135,7 +171,6 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // ─── POST /api/service-configs/seed ───────────────────────────────────────────
-// Insère le catalogue de base (17 entrées) ; ignore les doublons existants.
 router.post('/seed', async (req, res, next) => {
   try {
     const results = { inserted: 0, skipped: 0, errors: [] };
@@ -146,10 +181,7 @@ router.post('/seed', async (req, res, next) => {
           service: entry.service,
           type: entry.type,
         });
-        if (exists) {
-          results.skipped++;
-          continue;
-        }
+        if (exists) { results.skipped++; continue; }
         await ServiceConfig.create(entry);
         results.inserted++;
       } catch (err) {
