@@ -6,29 +6,26 @@ const { restrict } = require('../middleware/rbac.middleware');
 const Account = require('../models/Account');
 const Profile = require('../models/Profile');
 const Subscription = require('../models/Subscription');
+const ServiceConfig = require('../models/ServiceConfig');
 const { findAvailableSlot } = require('../services/allocation.service');
 
 router.use(protect, restrict('admin'));
 
 function normalizeOptionalAccountFields(payload = {}) {
   const normalized = { ...payload };
-
   if (typeof normalized.email === 'string') normalized.email = normalized.email.trim().toLowerCase();
   if (typeof normalized.password === 'string') normalized.password = normalized.password.trim();
   if (typeof normalized.notes === 'string') normalized.notes = normalized.notes.trim() || '';
   if (typeof normalized.assignedPartner === 'string') normalized.assignedPartner = normalized.assignedPartner.trim() || null;
   if (normalized.purchasePrice !== undefined) normalized.purchasePrice = Number(normalized.purchasePrice);
-
   return normalized;
 }
 
 function ensureValidObjectId(id, label = 'Identifiant invalide') {
-  return mongoose.isValidObjectId(id)
-    ? null
-    : { success: false, message: label };
+  return mongoose.isValidObjectId(id) ? null : { success: false, message: label };
 }
 
-// GET /api/accounts?service=Netflix
+// GET /api/accounts
 router.get('/', async (req, res, next) => {
   try {
     const { service, hasSlots } = req.query;
@@ -65,14 +62,36 @@ router.get('/', async (req, res, next) => {
 // POST /api/accounts
 router.post('/', async (req, res, next) => {
   try {
-    const { service, type, email, password, purchasePrice, assignedPartner, notes } = normalizeOptionalAccountFields(req.body);
+    const {
+      service, type, email, password, purchasePrice, assignedPartner, notes
+    } = normalizeOptionalAccountFields(req.body);
+
     if (!service || !type || !email || !password || purchasePrice === undefined) {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
     }
     if (Number.isNaN(purchasePrice)) {
       return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
-    const account = await Account.create({ service, type, email, password, purchasePrice, assignedPartner, notes });
+
+    // ✅ Résoudre maxSlots depuis ServiceConfig AVANT de créer le compte
+    // Cela évite la dépendance circulaire Account.js → ServiceConfig.js
+    let maxSlots;
+    try {
+      maxSlots = await ServiceConfig.getMaxSlots(service, type);
+    } catch (err) {
+      return res.status(400).json({
+        success: false,
+        message: `Service/type introuvable : ${service}/${type}. Vérifiez le catalogue des services.`,
+      });
+    }
+
+    const account = await Account.create({
+      service, type, email, password, purchasePrice,
+      assignedPartner: assignedPartner || null,
+      notes,
+      maxSlots, // ✅ passé directement, plus besoin du pre-save hook
+    });
+
     res.status(201).json({ success: true, data: account });
   } catch (err) { next(err); }
 });
@@ -107,13 +126,32 @@ router.put('/:id', async (req, res, next) => {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
     if (invalidId) return res.status(400).json(invalidId);
 
-    const { email, password, purchasePrice, assignedPartner, notes, isActive } = normalizeOptionalAccountFields(req.body);
+    const { email, password, purchasePrice, assignedPartner, notes, isActive, service, type } =
+      normalizeOptionalAccountFields(req.body);
+
     if (purchasePrice !== undefined && Number.isNaN(purchasePrice)) {
       return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
+
+    const updates = { email, password, purchasePrice, assignedPartner, notes, isActive };
+
+    // Si service ou type changent, recalculer maxSlots
+    if (service && type) {
+      try {
+        updates.maxSlots = await ServiceConfig.getMaxSlots(service, type);
+        updates.service = service;
+        updates.type = type;
+      } catch (err) {
+        return res.status(400).json({
+          success: false,
+          message: `Service/type introuvable : ${service}/${type}.`,
+        });
+      }
+    }
+
     const account = await Account.findByIdAndUpdate(
       req.params.id,
-      { $set: { email, password, purchasePrice, assignedPartner, notes, isActive } },
+      { $set: updates },
       { new: true, runValidators: true }
     );
     if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
@@ -121,8 +159,7 @@ router.put('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// DELETE /api/accounts/:id
-// FIX B7 : cascade → soft-delete tous les profils du compte, puis tous les abonnements liés
+// DELETE /api/accounts/:id — cascade profils + abonnements
 router.delete('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
@@ -133,11 +170,9 @@ router.delete('/:id', async (req, res, next) => {
 
     const now = new Date();
 
-    // 1. Récupérer les IDs de tous les profils de ce compte
     const profiles = await Profile.find({ accountId: account._id, deletedAt: null }, '_id');
     const profileIds = profiles.map(p => p._id);
 
-    // 2. Soft-delete les abonnements liés à ces profils
     if (profileIds.length > 0) {
       await Subscription.updateMany(
         { profileId: { $in: profileIds }, deletedAt: null },
@@ -145,13 +180,11 @@ router.delete('/:id', async (req, res, next) => {
       );
     }
 
-    // 3. Soft-delete tous les profils du compte
     await Profile.updateMany(
       { accountId: account._id, deletedAt: null },
       { $set: { deletedAt: now, isActive: false } }
     );
 
-    // 4. Soft-delete le compte
     await Account.findByIdAndUpdate(req.params.id, {
       $set: { deletedAt: now, isActive: false },
     });
