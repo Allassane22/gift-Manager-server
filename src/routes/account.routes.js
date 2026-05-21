@@ -25,6 +25,17 @@ function ensureValidObjectId(id, label = 'Identifiant invalide') {
   return mongoose.isValidObjectId(id) ? null : { success: false, message: label };
 }
 
+// Génère les noms de profils selon le service et le nombre de slots
+function generateProfileNames(service, maxSlots) {
+  const singleProfile = ['Spotify', 'Apple Music', 'Snapchat+', 'Prime Video'];
+  if (singleProfile.includes(service) || maxSlots === 1) return ['Principal'];
+  if (service === 'Netflix') {
+    return ['Profil 1', 'Profil 2', 'Profil 3', 'Profil 4', 'Profil 5'].slice(0, maxSlots);
+  }
+  if (maxSlots === 2) return ['Joueur 1', 'Joueur 2'];
+  return Array.from({ length: maxSlots }, (_, i) => `Profil ${i + 1}`);
+}
+
 // GET /api/accounts
 router.get('/', async (req, res, next) => {
   try {
@@ -37,10 +48,11 @@ router.get('/', async (req, res, next) => {
       .sort({ service: 1, type: 1 });
 
     const enriched = await Promise.all(accounts.map(async (acc) => {
-      const profiles = await Profile.find({ accountId: acc._id, isActive: true });
-      const usedSlots = profiles.filter((profile) => {
-        const assignedClients = Array.isArray(profile.assignedClients) ? profile.assignedClients : [];
-        return assignedClients.length > 0 && !profile.isFreeTrial;
+      const profiles = await Profile.find({ accountId: acc._id, isActive: true })
+        .populate('assignedClients', 'name phone');
+      const usedSlots = profiles.filter((p) => {
+        const assignedClients = Array.isArray(p.assignedClients) ? p.assignedClients : [];
+        return assignedClients.length > 0 && !p.isFreeTrial;
       }).length;
       const maxSlots = Number.isFinite(acc.maxSlots) ? acc.maxSlots : 0;
       return {
@@ -51,10 +63,7 @@ router.get('/', async (req, res, next) => {
       };
     }));
 
-    const result = hasSlots === 'true'
-      ? enriched.filter(a => a.freeSlots > 0)
-      : enriched;
-
+    const result = hasSlots === 'true' ? enriched.filter(a => a.freeSlots > 0) : enriched;
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 });
@@ -62,9 +71,8 @@ router.get('/', async (req, res, next) => {
 // POST /api/accounts
 router.post('/', async (req, res, next) => {
   try {
-    const {
-      service, type, email, password, purchasePrice, assignedPartner, notes
-    } = normalizeOptionalAccountFields(req.body);
+    const { service, type, email, password, purchasePrice, assignedPartner, notes } =
+      normalizeOptionalAccountFields(req.body);
 
     if (!service || !type || !email || !password || purchasePrice === undefined) {
       return res.status(400).json({ success: false, message: 'Champs obligatoires manquants' });
@@ -73,8 +81,7 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
 
-    // ✅ Résoudre maxSlots depuis ServiceConfig AVANT de créer le compte
-    // Cela évite la dépendance circulaire Account.js → ServiceConfig.js
+    // Résoudre maxSlots depuis ServiceConfig
     let maxSlots;
     try {
       maxSlots = await ServiceConfig.getMaxSlots(service, type);
@@ -85,14 +92,25 @@ router.post('/', async (req, res, next) => {
       });
     }
 
+    // Créer le compte
     const account = await Account.create({
       service, type, email, password, purchasePrice,
       assignedPartner: assignedPartner || null,
-      notes,
-      maxSlots, // ✅ passé directement, plus besoin du pre-save hook
+      notes, maxSlots,
     });
 
-    res.status(201).json({ success: true, data: account });
+    // Créer automatiquement les profils selon maxSlots
+    const profileNames = generateProfileNames(service, maxSlots);
+    const profiles = await Profile.insertMany(
+      profileNames.map(name => ({
+        accountId: account._id,
+        name,
+        isActive: true,
+        assignedClients: [],
+      }))
+    );
+
+    res.status(201).json({ success: true, data: { ...account.toJSON(), profiles } });
   } catch (err) { next(err); }
 });
 
@@ -135,31 +153,25 @@ router.put('/:id', async (req, res, next) => {
 
     const updates = { email, password, purchasePrice, assignedPartner, notes, isActive };
 
-    // Si service ou type changent, recalculer maxSlots
     if (service && type) {
       try {
         updates.maxSlots = await ServiceConfig.getMaxSlots(service, type);
         updates.service = service;
         updates.type = type;
       } catch (err) {
-        return res.status(400).json({
-          success: false,
-          message: `Service/type introuvable : ${service}/${type}.`,
-        });
+        return res.status(400).json({ success: false, message: `Service/type introuvable : ${service}/${type}.` });
       }
     }
 
     const account = await Account.findByIdAndUpdate(
-      req.params.id,
-      { $set: updates },
-      { new: true, runValidators: true }
+      req.params.id, { $set: updates }, { new: true, runValidators: true }
     );
     if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
     res.json({ success: true, data: account });
   } catch (err) { next(err); }
 });
 
-// DELETE /api/accounts/:id — cascade profils + abonnements
+// DELETE /api/accounts/:id
 router.delete('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
@@ -169,7 +181,6 @@ router.delete('/:id', async (req, res, next) => {
     if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
 
     const now = new Date();
-
     const profiles = await Profile.find({ accountId: account._id, deletedAt: null }, '_id');
     const profileIds = profiles.map(p => p._id);
 
@@ -185,9 +196,7 @@ router.delete('/:id', async (req, res, next) => {
       { $set: { deletedAt: now, isActive: false } }
     );
 
-    await Account.findByIdAndUpdate(req.params.id, {
-      $set: { deletedAt: now, isActive: false },
-    });
+    await Account.findByIdAndUpdate(req.params.id, { $set: { deletedAt: now, isActive: false } });
 
     res.json({ success: true, message: 'Compte désactivé, profils et abonnements liés annulés' });
   } catch (err) { next(err); }
