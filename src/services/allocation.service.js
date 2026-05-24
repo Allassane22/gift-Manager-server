@@ -29,11 +29,13 @@ const findAvailableSlot = async (service, preferredAccountId = null) => {
   let bestLoadRatio = Infinity;
 
   for (const account of accounts) {
+    // FIX B7 : populate('assignedClients') pour que le virtual isAvailable
+    // calcule assignedClients.length === 0 sur des documents réels et non des ObjectIds bruts
     const profiles = await Profile.find({
       accountId: account._id,
       isActive: true,
       deletedAt: null,
-    });
+    }).populate('assignedClients');
 
     const usedSlots = profiles.filter(p => !p.isFreeTrial && p.assignedClients.length > 0).length;
     const loadRatio = usedSlots / account.maxSlots;
@@ -235,7 +237,9 @@ const migrateSubscription = async ({ subscriptionId, newAccountId, newProfileId,
   const subscription = await Subscription.findById(subscriptionId);
   if (!subscription) throw { status: 404, message: 'Abonnement introuvable' };
 
-  const newProfile = await Profile.findById(newProfileId);
+  // FIX B18 : populate('assignedClients') pour que le virtual isAvailable
+  // calcule assignedClients.length === 0 sur des documents réels et non des ObjectIds bruts
+  const newProfile = await Profile.findById(newProfileId).populate('assignedClients');
   if (!newProfile || !newProfile.isAvailable) {
     throw { status: 409, message: 'Nouveau profil indisponible' };
   }

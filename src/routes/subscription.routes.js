@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const { protect } = require('../middleware/auth.middleware');
 const { restrict, ownDataOnly } = require('../middleware/rbac.middleware');
+const upload = require('../middleware/upload.middleware');
 const { createSubscription, renewSubscription, migrateSubscription } = require('../services/allocation.service');
 const { generateWhatsAppLink } = require('../services/whatsapp.service');
 const Subscription = require('../models/Subscription');
@@ -107,8 +108,8 @@ router.get('/:id', async (req, res, next) => {
 
     if (!sub) return res.status(404).json({ success: false, message: 'Abonnement introuvable' });
 
-    // Générer lien WhatsApp
-    const waLink = generateWhatsAppLink({
+    // Générer lien WhatsApp — FIX B19: await ajouté car generateWhatsAppLink est async
+    const waLink = await generateWhatsAppLink({
       phone: sub.clientId?.phone,
       clientName: sub.clientId?.name,
       service: sub.accountId?.service,
@@ -118,6 +119,25 @@ router.get('/:id', async (req, res, next) => {
     });
 
     res.json({ success: true, data: { ...sub.toJSON(), whatsappLink: waLink } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/subscriptions/:id/proof ───────────────────────────────────────
+// FIX B9/B21: route d'upload de preuve de paiement
+router.post('/:id/proof', restrict('admin'), upload.single('proof'), async (req, res, next) => {
+  try {
+    const invalidId = ensureValidObjectId(req.params.id, 'ID abonnement invalide');
+    if (invalidId) return res.status(400).json(invalidId);
+    if (!req.file) return res.status(400).json({ success: false, message: 'Fichier requis' });
+    const sub = await Subscription.findByIdAndUpdate(
+      req.params.id,
+      { $set: { proofUrl: req.file.path || req.file.filename, proofUploadedAt: new Date() } },
+      { new: true }
+    );
+    if (!sub) return res.status(404).json({ success: false, message: 'Abonnement introuvable' });
+    res.json({ success: true, data: sub, message: 'Preuve enregistrée' });
   } catch (err) {
     next(err);
   }

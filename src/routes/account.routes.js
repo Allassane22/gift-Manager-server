@@ -40,7 +40,7 @@ function generateProfileNames(service, maxSlots) {
 router.get('/', async (req, res, next) => {
   try {
     const { service, hasSlots } = req.query;
-    const filter = {};
+    const filter = { deletedAt: null };
     if (service) filter.service = service;
 
     const accounts = await Account.find(filter)

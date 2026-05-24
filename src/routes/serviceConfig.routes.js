@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const ServiceConfig = require('../models/ServiceConfig');
+const { protect } = require('../middleware/auth.middleware');
+const { restrict } = require('../middleware/rbac.middleware');
 
 // ─── Catalogue initial (17 entrées) ──────────────────────────────────────────
 const SEED_CATALOG = [
@@ -32,15 +34,6 @@ const SEED_CATALOG = [
 ];
 
 // ─── GET /api/service-configs ─────────────────────────────────────────────────
-// Retourne les services GROUPÉS par nom de service.
-// Format de réponse :
-// [
-//   { service: "Netflix", types: [{ type, maxSlots, price, _id }, ...] },
-//   { service: "Spotify", types: [...] },
-// ]
-// Le frontend peut ainsi faire :
-//   const selectedConfig = configs.find(s => s.service === form.service)
-//   const types = selectedConfig.types  → [{ type, maxSlots, price }]
 router.get('/', async (req, res, next) => {
   try {
     const { isActive } = req.query;
@@ -49,7 +42,6 @@ router.get('/', async (req, res, next) => {
 
     const configs = await ServiceConfig.find(filter).sort({ service: 1, type: 1 });
 
-    // Grouper par service
     const grouped = [];
     const map = {};
 
@@ -69,7 +61,7 @@ router.get('/', async (req, res, next) => {
         type: doc.type,
         maxSlots: doc.maxSlots,
         price: doc.price,
-        suggestedPrice: doc.price, // alias pour compatibilité frontend
+        suggestedPrice: doc.price,
         currency: doc.currency,
         description: doc.description,
       });
@@ -82,11 +74,39 @@ router.get('/', async (req, res, next) => {
 });
 
 // ─── GET /api/service-configs/flat ────────────────────────────────────────────
-// Retourne la liste plate (non groupée) — utile pour l'admin ServiceConfigPage
 router.get('/flat', async (req, res, next) => {
   try {
     const configs = await ServiceConfig.find({}).sort({ service: 1, type: 1 });
     res.json({ success: true, data: configs });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/service-configs/seed ───────────────────────────────────────────
+router.post('/seed', protect, restrict('admin'), async (req, res, next) => {
+  try {
+    const results = { inserted: 0, skipped: 0, errors: [] };
+
+    for (const entry of SEED_CATALOG) {
+      try {
+        const exists = await ServiceConfig.findOne({
+          service: entry.service,
+          type: entry.type,
+        });
+        if (exists) { results.skipped++; continue; }
+        await ServiceConfig.create(entry);
+        results.inserted++;
+      } catch (err) {
+        results.errors.push({ entry, error: err.message });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Seed terminé : ${results.inserted} insérés, ${results.skipped} ignorés.`,
+      data: results,
+    });
   } catch (err) {
     next(err);
   }
@@ -106,7 +126,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // ─── POST /api/service-configs ────────────────────────────────────────────────
-router.post('/', async (req, res, next) => {
+router.post('/', protect, restrict('admin'), async (req, res, next) => {
   try {
     const { service, type, maxSlots, price, currency, description, isActive } = req.body;
     const config = await ServiceConfig.create({
@@ -125,7 +145,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // ─── PUT /api/service-configs/:id ─────────────────────────────────────────────
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', protect, restrict('admin'), async (req, res, next) => {
   try {
     const allowed = ['service', 'type', 'maxSlots', 'price', 'currency', 'description', 'isActive'];
     const updates = {};
@@ -154,7 +174,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // ─── DELETE /api/service-configs/:id (soft delete) ────────────────────────────
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', protect, restrict('admin'), async (req, res, next) => {
   try {
     const config = await ServiceConfig.findOneAndUpdate(
       { _id: req.params.id, deletedAt: null },
@@ -165,35 +185,6 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Configuration introuvable' });
     }
     res.json({ success: true, message: 'Configuration supprimée (soft delete)', data: config });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ─── POST /api/service-configs/seed ───────────────────────────────────────────
-router.post('/seed', async (req, res, next) => {
-  try {
-    const results = { inserted: 0, skipped: 0, errors: [] };
-
-    for (const entry of SEED_CATALOG) {
-      try {
-        const exists = await ServiceConfig.findOne({
-          service: entry.service,
-          type: entry.type,
-        });
-        if (exists) { results.skipped++; continue; }
-        await ServiceConfig.create(entry);
-        results.inserted++;
-      } catch (err) {
-        results.errors.push({ entry, error: err.message });
-      }
-    }
-
-    res.status(201).json({
-      success: true,
-      message: `Seed terminé : ${results.inserted} insérés, ${results.skipped} ignorés.`,
-      data: results,
-    });
   } catch (err) {
     next(err);
   }
