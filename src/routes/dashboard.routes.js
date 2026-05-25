@@ -31,17 +31,17 @@ router.get('/stats', async (req, res, next) => {
       totalClients,
       totalAccounts,
     ] = await Promise.all([
-      Subscription.countDocuments(),
-      Subscription.countDocuments({ status: 'active' }),
-      Subscription.countDocuments({ status: 'overdue' }),
-      Subscription.countDocuments({ status: 'suspended' }),
-      Subscription.countDocuments({ status: 'active', endDate: { $lte: in7Days, $gte: now } }),
+      Subscription.countDocuments({ deletedAt: null }),
+      Subscription.countDocuments({ status: 'active', deletedAt: null }),
+      Subscription.countDocuments({ status: 'overdue', deletedAt: null }),
+      Subscription.countDocuments({ status: 'suspended', deletedAt: null }),
+      Subscription.countDocuments({ status: 'active', endDate: { $lte: in7Days, $gte: now }, deletedAt: null }),
       Subscription.aggregate([
-        { $match: { createdAt: { $gte: startOfMonth } } },
+        { $match: { createdAt: { $gte: startOfMonth }, deletedAt: null } },
         { $group: { _id: null, total: { $sum: '$pricePaid' } } },
       ]),
       Subscription.aggregate([
-        { $match: { createdAt: { $gte: startOfMonth } } },
+        { $match: { createdAt: { $gte: startOfMonth }, deletedAt: null } },
         { $group: { _id: null, total: { $sum: '$profit' } } },
       ]),
       Client.countDocuments(),
@@ -79,6 +79,7 @@ router.get('/stats', async (req, res, next) => {
 router.get('/revenue-by-service', async (req, res, next) => {
   try {
     const result = await Subscription.aggregate([
+      { $match: { deletedAt: null } },
       {
         $lookup: {
           from: 'accounts',
@@ -112,7 +113,7 @@ router.get('/monthly-revenue', async (req, res, next) => {
     const startDate = dayjs.utc().subtract(months - 1, 'month').startOf('month').toDate();
 
     const result = await Subscription.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
+      { $match: { createdAt: { $gte: startDate }, deletedAt: null } },
       {
         $group: {
           _id: {

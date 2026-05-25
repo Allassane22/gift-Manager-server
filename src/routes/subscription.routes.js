@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const { protect } = require("../middleware/auth.middleware");
 const { restrict, ownDataOnly } = require("../middleware/rbac.middleware");
-const { uploadSubscriptionProof } = require("../middleware/upload.middleware");
+const { handleUpload, uploadSubscriptionProof } = require("../middleware/upload.middleware");
 const {
   createSubscription,
   renewSubscription,
@@ -11,6 +11,7 @@ const {
 } = require("../services/allocation.service");
 const { generateWhatsAppLink } = require("../services/whatsapp.service");
 const Subscription = require("../models/Subscription");
+const Profile = require("../models/Profile");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 dayjs.extend(utc);
@@ -84,30 +85,27 @@ router.get("/", ownDataOnly, async (req, res, next) => {
       filter.status = "active";
     }
 
-    // Filtre par service (via populate account)
+    // FIX M-05: résoudre les accountIds avant pagination pour éviter les résultats tronqués
+    if (service) {
+      const Account = require("../models/Account");
+      const matchingAccounts = await Account.find({ service, deletedAt: null }, "_id");
+      filter.accountId = { $in: matchingAccounts.map((a) => a._id) };
+    }
+
     const subscriptions = await Subscription.find(filter)
       .populate("clientId", "name phone email")
-      .populate({
-        path: "accountId",
-        select: "service type email maxSlots",
-        ...(service && { match: { service } }),
-      })
+      .populate("accountId", "service type email maxSlots")
       .populate("profileId", "name pin")
       .populate("partnerId", "name email")
       .sort({ endDate: 1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
 
-    // Filtrer les null accountId si filtre service actif
-    const filtered = service
-      ? subscriptions.filter((s) => s.accountId !== null)
-      : subscriptions;
-
     const total = await Subscription.countDocuments(filter);
 
     res.json({
       success: true,
-      data: filtered,
+      data: subscriptions,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -140,7 +138,6 @@ router.get("/:id", async (req, res, next) => {
         .status(404)
         .json({ success: false, message: "Abonnement introuvable" });
 
-    // Générer lien WhatsApp — FIX B19: await ajouté car generateWhatsAppLink est async
     const waLink = await generateWhatsAppLink({
       phone: sub.clientId?.phone,
       clientName: sub.clientId?.name,
@@ -160,11 +157,11 @@ router.get("/:id", async (req, res, next) => {
 });
 
 // ─── POST /api/subscriptions/:id/proof ───────────────────────────────────────
-// FIX B9/B21: route d'upload de preuve de paiement
+// FIX M-01: utiliser handleUpload(uploadSubscriptionProof) au lieu de uploadSubscriptionProof directement
 router.post(
   "/:id/proof",
   restrict("admin"),
-  uploadSubscriptionProof,
+  handleUpload(uploadSubscriptionProof),
   async (req, res, next) => {
     try {
       const invalidId = ensureValidObjectId(
@@ -361,7 +358,8 @@ router.patch("/:id/status", restrict("admin"), async (req, res, next) => {
     if (invalidId) return res.status(400).json(invalidId);
 
     const { status } = req.body;
-    const allowed = ["active", "suspended", "cancelled"];
+    // FIX Mi-06: ajout de overdue et pending_payment
+    const allowed = ["active", "overdue", "suspended", "cancelled", "pending_payment"];
     if (!allowed.includes(status)) {
       return res
         .status(400)
@@ -394,13 +392,21 @@ router.delete("/:id", restrict("admin"), async (req, res, next) => {
     );
     if (invalidId) return res.status(400).json(invalidId);
 
-    const sub = await Subscription.findByIdAndUpdate(
-      req.params.id,
-      { $set: { deletedAt: new Date(), status: "cancelled" } },
-      { new: true },
-    );
+    // FIX C-01: récupérer l'abonnement avant le soft-delete pour libérer le profil
+    const sub = await Subscription.findById(req.params.id);
     if (!sub)
       return res.status(404).json({ success: false, message: "Introuvable" });
+
+    await Subscription.findByIdAndUpdate(
+      req.params.id,
+      { $set: { deletedAt: new Date(), status: "cancelled" } },
+    );
+
+    if (sub.profileId && sub.clientId) {
+      await Profile.findByIdAndUpdate(sub.profileId, {
+        $pull: { assignedClients: sub.clientId },
+      });
+    }
 
     res.json({ success: true, message: "Abonnement annulé" });
   } catch (err) {

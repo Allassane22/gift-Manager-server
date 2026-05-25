@@ -40,7 +40,8 @@ router.get("/:id/stats", async (req, res, next) => {
         .status(404)
         .json({ success: false, message: "Partenaire introuvable" });
 
-    const subs = await Subscription.find({ partnerId: req.params.id })
+    // [Mi-07 FIX] Ajout de deletedAt: null pour exclure les abonnements supprimés
+    const subs = await Subscription.find({ partnerId: req.params.id, deletedAt: null })
       .populate("clientId", "name")
       .populate("accountId", "service");
 
@@ -105,7 +106,6 @@ router.put("/:id", async (req, res, next) => {
       return res
         .status(404)
         .json({ success: false, message: "Partenaire introuvable" });
-    // Changer le mot de passe séparément si fourni
     if (password && password.length >= 8) {
       const full = await User.findById(req.params.id);
       full.password = password;
@@ -120,6 +120,13 @@ router.put("/:id", async (req, res, next) => {
 // DELETE /api/partners/:id (soft delete)
 router.delete("/:id", async (req, res, next) => {
   try {
+    // [M-07 FIX] Vérifier l'existence du partenaire avant la mise à jour
+    const partner = await User.findById(req.params.id);
+    if (!partner)
+      return res
+        .status(404)
+        .json({ success: false, message: "Partenaire introuvable" });
+
     await User.findByIdAndUpdate(req.params.id, {
       $set: { isActive: false, deletedAt: new Date() },
     });

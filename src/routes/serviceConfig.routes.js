@@ -34,7 +34,7 @@ const SEED_CATALOG = [
 ];
 
 // ─── GET /api/service-configs ─────────────────────────────────────────────────
-router.get('/', async (req, res, next) => {
+router.get('/', protect, async (req, res, next) => {
   try {
     const { isActive } = req.query;
     const filter = {};
@@ -74,7 +74,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // ─── GET /api/service-configs/flat ────────────────────────────────────────────
-router.get('/flat', async (req, res, next) => {
+router.get('/flat', protect, async (req, res, next) => {
   try {
     const configs = await ServiceConfig.find({}).sort({ service: 1, type: 1 });
     res.json({ success: true, data: configs });

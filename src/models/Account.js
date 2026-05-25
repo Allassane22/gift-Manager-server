@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ServiceConfig = require('./ServiceConfig');
 
 const accountSchema = new mongoose.Schema({
   service: {
@@ -24,8 +25,8 @@ const accountSchema = new mongoose.Schema({
   maxSlots: {
     type: Number,
     required: true,
-    min: [1, 'maxSlots doit être au moins 1'],
   },
+  // Partenaire réservé (optionnel)
   assignedPartner: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -45,7 +46,19 @@ const accountSchema = new mongoose.Schema({
   toObject: { virtuals: true },
 });
 
-// Virtual: profils liés
+// Calcul automatique de maxSlots via ServiceConfig (dynamique, sans enum statique)
+accountSchema.pre('save', async function (next) {
+  if (this.isModified('service') || this.isModified('type')) {
+    try {
+      this.maxSlots = await ServiceConfig.getMaxSlots(this.service, this.type);
+    } catch (err) {
+      return next(err);
+    }
+  }
+  next();
+});
+
+// Virtual: profils liés (slots utilisés calculés via populate)
 accountSchema.virtual('profiles', {
   ref: 'Profile',
   localField: '_id',

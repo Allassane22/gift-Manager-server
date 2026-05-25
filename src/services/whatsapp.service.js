@@ -2,9 +2,7 @@
 
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
-const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
-dayjs.extend(timezone);
 
 const WhatsAppTemplate = require('../models/WhatsAppTemplate');
 
@@ -48,7 +46,7 @@ const interpolate = (body, vars) => {
  * @param {number} params.amount       - Montant en FCFA
  * @param {string} [params.type]       - Type de template (défaut: 'reminder')
  * @param {string} [params.numero]     - Numéro Wave/OM (défaut: PAYMENT_NUMBER)
- * @returns {Promise<string>}          - URL wa.me/…
+ * @returns {Promise<string|null>}     - URL wa.me/… ou null si phone absent
  */
 const generateWhatsAppLink = async ({
   phone,
@@ -89,8 +87,10 @@ const generateWhatsAppLink = async ({
   };
 
   // 3. Interpolation + encodage
-  const cleanPhone    = phone.replace(/[\s\-\(\)]/g, '');
-  const message       = interpolate(body, vars);
+  const cleanPhone = (phone || '').replace(/[\s\-\(\)]/g, '');
+  if (!cleanPhone) return null;
+
+  const message        = interpolate(body, vars);
   const encodedMessage = encodeURIComponent(message);
 
   return `https://wa.me/${cleanPhone}?text=${encodedMessage}`;

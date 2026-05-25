@@ -193,6 +193,11 @@ router.delete('/:id', async (req, res, next) => {
 
     await Profile.updateMany(
       { accountId: account._id, deletedAt: null },
+      { $set: { assignedClients: [] } }
+    );
+
+    await Profile.updateMany(
+      { accountId: account._id, deletedAt: null },
       { $set: { deletedAt: now, isActive: false } }
     );
 
