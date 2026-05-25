@@ -90,7 +90,12 @@ router.delete('/:id', async (req, res, next) => {
       { $set: { deletedAt: now, status: 'cancelled' } }
     );
 
-    // 2. Soft-delete le profil
+    // 2. Vider assignedClients du profil (libérer les slots)
+    await Profile.findByIdAndUpdate(req.params.id, {
+      $set: { assignedClients: [] },
+    });
+
+    // 3. Soft-delete le profil
     await Profile.findByIdAndUpdate(req.params.id, {
       $set: { deletedAt: now, isActive: false },
     });

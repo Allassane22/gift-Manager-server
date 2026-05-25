@@ -62,7 +62,7 @@ const refreshExpiredStatuses = async () => {
 // ─── Mécanisme 2 : recalcul unitaire à la lecture ────────────────────────────
 
 const computeStatus = (sub) => {
-  if (sub.status === 'cancelled' || sub.status === 'suspended') return sub.status;
+  if (sub.status === 'cancelled' || sub.status === 'suspended' || sub.status === 'pending_payment') return sub.status;
 
   const now             = dayjs.utc();
   const end             = dayjs.utc(sub.endDate);

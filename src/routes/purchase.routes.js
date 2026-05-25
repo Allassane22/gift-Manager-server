@@ -32,7 +32,7 @@ router.get('/catalog', (req, res) => {
 router.get('/', async (req, res, next) => {
   try {
     const { clientId, status, page = 1, limit = 30 } = req.query;
-    const filter = {};
+    const filter = { deletedAt: null };
     if (clientId) filter.clientId = clientId;
     if (status) filter.status = status;
 

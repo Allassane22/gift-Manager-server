@@ -15,9 +15,6 @@ const findAvailableSlot = async (service, preferredAccountId = null) => {
     service,
     isActive: true,
     ...(preferredAccountId && { _id: preferredAccountId }),
-  }).populate({
-    path: 'profiles',
-    match: { deletedAt: null, isActive: true },
   });
 
   if (!accounts.length) {
@@ -86,7 +83,7 @@ const createSubscription = async ({
 
   if (profileId && accountId) {
     account = await Account.findById(accountId);
-    profile = await Profile.findById(profileId);
+    profile = await Profile.findById(profileId).populate('assignedClients');
     if (!account) throw { status: 404, message: 'Compte introuvable' };
     if (!profile || profile.assignedClients.length > 0) {
       throw { status: 409, message: 'Ce profil est déjà occupé' };

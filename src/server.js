@@ -37,8 +37,7 @@ app.use(
       if (!origin) return callback(null, true);
       // Accepte toutes les URLs Vercel du projet
       if (
-        allowedOrigins.includes(origin) ||
-        /https:\/\/gift-manager-frontend.*\.vercel\.app$/.test(origin)
+        allowedOrigins.includes(origin)
       ) {
         return callback(null, true);
       }
