@@ -50,27 +50,30 @@ router.get('/', async (req, res, next) => {
     const enriched = await Promise.all(accounts.map(async (acc) => {
       const profiles = await Profile.find({ accountId: acc._id, isActive: true })
         .populate('assignedClients', 'name phone');
-      // Filtrer les nulls (clients soft-deleted encore dans assignedClients)
-      // et nettoyer le tableau en base si nécessaire
+      // Nettoyer les IDs fantômes (clients null après populate)
       const cleanedProfiles = await Promise.all(profiles.map(async (p) => {
         const realClients = (p.assignedClients || []).filter(c => c !== null && c !== undefined);
-        if (realClients.length !== p.assignedClients.length) {
-          // Nettoyer les IDs fantômes en base
+        if (realClients.length !== (p.assignedClients || []).length) {
           await Profile.findByIdAndUpdate(p._id, {
             $set: { assignedClients: realClients.map(c => c._id) }
           });
         }
-        return { ...p.toJSON(), assignedClients: realClients };
+        const isAvailable = p.isFreeTrial ? true : realClients.length === 0;
+        return { ...p.toJSON(), assignedClients: realClients, isAvailable };
       }));
-      const usedSlots = cleanedProfiles.filter((p) => {
-        return p.assignedClients.length > 0 && !p.isFreeTrial;
-      }).length;
+
+      // freeSlots basé sur les profils réels libres (pas maxSlots théorique)
+      const freeProfilesCount = cleanedProfiles.filter(p => p.isAvailable).length;
+      const usedSlots = cleanedProfiles.filter(p => !p.isAvailable && !p.isFreeTrial).length;
       const maxSlots = Number.isFinite(acc.maxSlots) ? acc.maxSlots : 0;
+
       return {
         ...acc.toJSON(),
         profiles: cleanedProfiles,
         usedSlots,
-        freeSlots: Math.max(maxSlots - usedSlots, 0),
+        // freeSlots = profils libres réels (cohérent avec ce qu'on peut réellement attribuer)
+        freeSlots: freeProfilesCount,
+        totalSlots: maxSlots,
       };
     }));
 
