@@ -17,13 +17,13 @@ const startCronJobs = () => {
 
       // 1. Actifs → En retard (date dépassée)
       const overdueResult = await Subscription.updateMany(
-        { status: 'active', endDate: { $lt: now } },
+        { status: 'active', endDate: { $lt: now }, deletedAt: null },
         { $set: { status: 'overdue' } }
       );
 
       // 2. En retard → Suspendu (après X jours)
       const suspendedResult = await Subscription.updateMany(
-        { status: 'overdue', endDate: { $lt: suspendThreshold } },
+        { status: 'overdue', endDate: { $lt: suspendThreshold }, deletedAt: null },
         { $set: { status: 'suspended' } }
       );
 
@@ -43,6 +43,7 @@ const startCronJobs = () => {
       const expiringSoon = await Subscription.find({
         status: 'active',
         endDate: { $gte: now, $lte: in3Days },
+        deletedAt: null,
       }).populate('clientId', 'name phone').populate('accountId', 'service');
 
       if (expiringSoon.length) {

@@ -181,6 +181,50 @@ router.put('/:id', async (req, res, next) => {
       req.params.id, { $set: updates }, { new: true, runValidators: true }
     );
     if (!account) return res.status(404).json({ success: false, message: 'Compte introuvable' });
+
+    // ── Synchronisation des profils si service/type a changé ─────────────────
+    // Si maxSlots a changé, on ajuste les profils : on crée les manquants,
+    // on supprime (soft-delete) les surplus libres. Les profils occupés ne sont
+    // jamais supprimés — on retourne une info si des profils occupés sont en surplus.
+    if (updates.maxSlots !== undefined) {
+      const newMaxSlots = updates.maxSlots;
+      const newService  = updates.service || account.service;
+
+      const existingProfiles = await Profile.find({
+        accountId: account._id,
+        deletedAt: null,
+      }).populate('assignedClients');
+
+      const occupiedProfiles = existingProfiles.filter(p => p.assignedClients.length > 0);
+      const freeProfiles     = existingProfiles.filter(p => p.assignedClients.length === 0);
+      const currentTotal     = existingProfiles.length;
+
+      if (newMaxSlots > currentTotal) {
+        // Créer les profils manquants
+        const toCreate = newMaxSlots - currentTotal;
+        const profileNames = generateProfileNames(newService, newMaxSlots);
+        const newNames = profileNames.slice(currentTotal);
+        await Profile.insertMany(
+          newNames.slice(0, toCreate).map(name => ({
+            accountId: account._id,
+            name,
+            isActive: true,
+            assignedClients: [],
+          }))
+        );
+      } else if (newMaxSlots < currentTotal) {
+        // Supprimer les profils libres en surplus (les plus récents en premier)
+        const surplus = currentTotal - newMaxSlots;
+        const toDelete = freeProfiles.slice(-surplus);
+        if (toDelete.length > 0) {
+          await Profile.updateMany(
+            { _id: { $in: toDelete.map(p => p._id) } },
+            { $set: { deletedAt: new Date(), isActive: false } }
+          );
+        }
+      }
+    }
+
     res.json({ success: true, data: account });
   } catch (err) { next(err); }
 });

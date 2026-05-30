@@ -113,7 +113,7 @@ router.post('/seed', protect, restrict('admin'), async (req, res, next) => {
 });
 
 // ─── GET /api/service-configs/:id ─────────────────────────────────────────────
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', protect, async (req, res, next) => {
   try {
     const config = await ServiceConfig.findById(req.params.id);
     if (!config) {
@@ -176,15 +176,30 @@ router.put('/:id', protect, restrict('admin'), async (req, res, next) => {
 // ─── DELETE /api/service-configs/:id (soft delete) ────────────────────────────
 router.delete('/:id', protect, restrict('admin'), async (req, res, next) => {
   try {
-    const config = await ServiceConfig.findOneAndUpdate(
-      { _id: req.params.id, deletedAt: null },
-      { $set: { deletedAt: new Date(), isActive: false } },
-      { new: true }
-    );
+    const config = await ServiceConfig.findOne({ _id: req.params.id, deletedAt: null });
     if (!config) {
       return res.status(404).json({ success: false, message: 'Configuration introuvable' });
     }
-    res.json({ success: true, message: 'Configuration supprimée (soft delete)', data: config });
+
+    // Vérifier qu'aucun compte actif n'utilise encore ce service/type (Mo7)
+    const Account = require('../models/Account');
+    const activeAccounts = await Account.countDocuments({
+      service: config.service,
+      type: config.type,
+      deletedAt: null,
+    });
+    if (activeAccounts > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `Impossible de supprimer : ${activeAccounts} compte(s) actif(s) utilisent encore "${config.service} — ${config.type}". Supprimez ou migrez ces comptes d'abord.`,
+      });
+    }
+
+    config.deletedAt = new Date();
+    config.isActive  = false;
+    await config.save();
+
+    res.json({ success: true, message: 'Configuration supprimée', data: config });
   } catch (err) {
     next(err);
   }

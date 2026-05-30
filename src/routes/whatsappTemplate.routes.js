@@ -87,14 +87,15 @@ Paiement via Wave / Orange Money au *{{numero}}* 🎬`,
 ];
 
 // ─── GET /api/whatsapp-templates ─────────────────────────────────────────────
-// Accessible admin + partner
+// Admin → voit tous les templates (actifs + inactifs)
+// Partner → voit uniquement les templates actifs
 router.get('/', protect, restrict('admin', 'partner'), async (req, res) => {
   try {
-    const templates = await WhatsAppTemplate.find(
-      { isActive: true, deletedAt: null },
-      '-__v'
-    ).sort({ type: 1 });
+    const filter = req.user.role === 'admin'
+      ? { deletedAt: null }
+      : { isActive: true, deletedAt: null };
 
+    const templates = await WhatsAppTemplate.find(filter, '-__v').sort({ type: 1 });
     res.json({ success: true, data: templates });
   } catch (err) {
     console.error('[WhatsAppTemplates] GET /', err);
@@ -126,21 +127,30 @@ router.get('/:type', protect, restrict('admin', 'partner'), async (req, res) => 
 });
 
 // ─── PUT /api/whatsapp-templates/:type ───────────────────────────────────────
-// Admin seulement — on ne modifie que le body (et optionnellement le label)
+// Admin seulement — modifie body, label et/ou isActive
 router.put('/:type', protect, restrict('admin'), async (req, res) => {
   try {
-    const { body, label } = req.body;
+    const { body, label, isActive } = req.body;
 
-    if (!body || typeof body !== 'string' || !body.trim()) {
+    // body est requis sauf si on fait uniquement un toggle isActive
+    const onlyToggle = isActive !== undefined && body === undefined && label === undefined;
+    if (!onlyToggle && (!body || typeof body !== 'string' || !body.trim())) {
       return res.status(400).json({
         success: false,
         message: 'Le champ "body" est requis et ne peut pas être vide',
       });
     }
 
-    const update = { body: body.trim() };
+    const update = {};
+    if (body && typeof body === 'string' && body.trim()) {
+      update.body = body.trim();
+    }
     if (label && typeof label === 'string' && label.trim()) {
       update.label = label.trim();
+    }
+    // isActive est maintenant inclus dans l'update si présent
+    if (isActive !== undefined) {
+      update.isActive = Boolean(isActive);
     }
 
     const template = await WhatsAppTemplate.findOneAndUpdate(

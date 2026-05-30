@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const User = require('../models/User');
 const AuditLog = require('../models/AuditLog');
+const { sendPasswordResetEmail } = require('./email.service');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -89,4 +91,65 @@ const logout = async (userId) => {
   await User.findByIdAndUpdate(userId, { refreshToken: null });
 };
 
-module.exports = { login, refreshTokens, logout };
+/**
+ * Demande de réinitialisation : génère un token, l'envoie par email.
+ * On renvoie toujours un succès même si l'email n'existe pas (anti-énumération).
+ */
+const forgotPassword = async (email, frontendUrl) => {
+  const user = await User.findOne({ email: email.toLowerCase().trim() })
+    .select('+resetPasswordToken +resetPasswordExpires');
+
+  // Réponse identique qu'il existe ou non (anti-énumération)
+  if (!user) return;
+
+  // Générer un token aléatoire brut (envoyé par email) + son hash (stocké en BDD)
+  const rawToken   = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  user.resetPasswordToken   = hashedToken;
+  user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+  await user.save({ validateBeforeSave: false });
+
+  const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+  try {
+    await sendPasswordResetEmail(user.email, user.name, resetUrl);
+  } catch (emailErr) {
+    // En cas d'échec d'envoi, on annule le token pour ne pas laisser un token orphelin
+    user.resetPasswordToken   = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    throw { status: 500, message: "Impossible d'envoyer l'email. Vérifiez la configuration SMTP." };
+  }
+};
+
+/**
+ * Réinitialisation effective : vérifie le token, met à jour le mot de passe.
+ */
+const resetPassword = async (rawToken, newPassword) => {
+  if (!rawToken) throw { status: 400, message: 'Token manquant' };
+  if (!newPassword || newPassword.length < 8) {
+    throw { status: 400, message: 'Le mot de passe doit contenir au moins 8 caractères' };
+  }
+
+  // Retrouver l'utilisateur par hash du token + token non expiré
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  const user = await User.findOne({
+    resetPasswordToken:   hashedToken,
+    resetPasswordExpires: { $gt: new Date() }, // pas encore expiré
+  }).select('+resetPasswordToken +resetPasswordExpires +password');
+
+  if (!user) {
+    throw { status: 400, message: 'Lien invalide ou expiré. Faites une nouvelle demande.' };
+  }
+
+  // Mettre à jour le mot de passe et invalider le token
+  user.password             = newPassword; // le pre-save hook bcrypt s'en charge
+  user.resetPasswordToken   = undefined;
+  user.resetPasswordExpires = undefined;
+  user.refreshToken         = null; // invalider toutes les sessions actives
+  await user.save();
+};
+
+module.exports = { login, refreshTokens, logout, forgotPassword, resetPassword };

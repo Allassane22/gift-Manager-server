@@ -12,6 +12,8 @@ const {
 const { generateWhatsAppLink } = require("../services/whatsapp.service");
 const Subscription = require("../models/Subscription");
 const Profile = require("../models/Profile");
+const Client = require("../models/Client");
+const User = require("../models/User");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 dayjs.extend(utc);
@@ -127,9 +129,14 @@ router.get("/:id", async (req, res, next) => {
     );
     if (invalidId) return res.status(400).json(invalidId);
 
+    // Les admins voient le mot de passe du compte, les partenaires non
+    const accountFields = req.user.role === "admin"
+      ? "service type email password"
+      : "service type email";
+
     const sub = await Subscription.findById(req.params.id)
       .populate("clientId", "name phone email")
-      .populate("accountId", "service type email password")
+      .populate("accountId", accountFields)
       .populate("profileId", "name pin")
       .populate("partnerId", "name email");
 
@@ -137,6 +144,12 @@ router.get("/:id", async (req, res, next) => {
       return res
         .status(404)
         .json({ success: false, message: "Abonnement introuvable" });
+
+    // Un partenaire ne peut consulter que ses propres abonnements
+    if (req.user.role === "partner" &&
+        String(sub.partnerId?._id || sub.partnerId) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: "Accès refusé" });
+    }
 
     const waLink = await generateWhatsAppLink({
       phone: sub.clientId?.phone,
@@ -234,6 +247,26 @@ router.post("/", restrict("admin"), async (req, res, next) => {
         .json({ success: false, message: "Montants invalides" });
     }
 
+    // ── Validation des dates ──────────────────────────────────────────────────
+    const parsedStart = dayjs.utc(startDate || new Date());
+    const parsedEnd   = dayjs.utc(endDate);
+    if (!parsedEnd.isValid()) {
+      return res.status(400).json({ success: false, message: "Date de fin invalide" });
+    }
+    if (parsedEnd.isBefore(parsedStart)) {
+      return res.status(400).json({
+        success: false,
+        message: "La date de fin doit être postérieure à la date de début",
+      });
+    }
+    // Tolérance J-1 pour les créations rétroactives le même jour selon fuseau horaire
+    if (parsedEnd.isBefore(dayjs.utc().subtract(1, "day"))) {
+      return res.status(400).json({
+        success: false,
+        message: "La date de fin ne peut pas être dans le passé",
+      });
+    }
+
     const subscription = await createSubscription({
       clientId,
       service,
@@ -256,6 +289,70 @@ router.post("/", restrict("admin"), async (req, res, next) => {
         data: subscription,
         message: "Abonnement créé avec succès",
       });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── PUT /api/subscriptions/:id ───────────────────────────────────────────────
+// Modification d'un abonnement existant : date de fin et prix uniquement.
+// Le client, le compte et le profil ne peuvent pas être changés ici
+// (utiliser /migrate pour changer de compte/profil).
+router.put("/:id", restrict("admin"), async (req, res, next) => {
+  try {
+    const invalidId = ensureValidObjectId(req.params.id, "ID d'abonnement invalide");
+    if (invalidId) return res.status(400).json(invalidId);
+
+    const { endDate, pricePaid, purchasePrice, notes } = normalizeSubscriptionFields(req.body);
+
+    if (!endDate) {
+      return res.status(400).json({ success: false, message: "La date de fin est requise" });
+    }
+    if (pricePaid !== undefined && pricePaid !== null && Number.isNaN(pricePaid)) {
+      return res.status(400).json({ success: false, message: "Prix invalide" });
+    }
+
+    // Validation date de fin
+    const parsedEnd = dayjs.utc(endDate);
+    if (!parsedEnd.isValid()) {
+      return res.status(400).json({ success: false, message: "Date de fin invalide" });
+    }
+    if (parsedEnd.isBefore(dayjs.utc().subtract(1, "day"))) {
+      return res.status(400).json({
+        success: false,
+        message: "La date de fin ne peut pas être dans le passé",
+      });
+    }
+
+    const sub = await Subscription.findById(req.params.id);
+    if (!sub) return res.status(404).json({ success: false, message: "Abonnement introuvable" });
+
+    const oldPricePaid = sub.pricePaid;
+
+    // Mise à jour des champs autorisés
+    sub.endDate = endDate;
+    if (pricePaid !== undefined && pricePaid !== null) sub.pricePaid = pricePaid;
+    if (purchasePrice !== undefined && purchasePrice !== null) sub.purchasePrice = purchasePrice;
+    if (notes !== undefined) sub.notes = notes;
+    sub.status = "active";
+
+    sub.history.push({
+      action: "updated",
+      note: `Modification manuelle`,
+      doneBy: req.user._id,
+      at: new Date(),
+    });
+
+    await sub.save();
+
+    // Ajuster stats client si pricePaid a changé
+    if (pricePaid !== undefined && pricePaid !== null && pricePaid !== oldPricePaid) {
+      await Client.findByIdAndUpdate(sub.clientId, {
+        $inc: { totalPaid: pricePaid - oldPricePaid },
+      }).catch(() => {});
+    }
+
+    res.json({ success: true, data: sub, message: "Abonnement mis à jour" });
   } catch (err) {
     next(err);
   }
@@ -392,20 +489,44 @@ router.delete("/:id", restrict("admin"), async (req, res, next) => {
     );
     if (invalidId) return res.status(400).json(invalidId);
 
-    // FIX C-01: récupérer l'abonnement avant le soft-delete pour libérer le profil
     const sub = await Subscription.findById(req.params.id);
     if (!sub)
       return res.status(404).json({ success: false, message: "Introuvable" });
+
+    // Ne décrémenter que si l'abonnement n'est pas déjà annulé
+    const alreadyCancelled = sub.status === "cancelled";
 
     await Subscription.findByIdAndUpdate(
       req.params.id,
       { $set: { deletedAt: new Date(), status: "cancelled" } },
     );
 
+    // Libérer le profil
     if (sub.profileId && sub.clientId) {
       await Profile.findByIdAndUpdate(sub.profileId, {
         $pull: { assignedClients: sub.clientId },
       });
+    }
+
+    // Décrémenter stats client et partenaire uniquement si pas déjà annulé
+    if (!alreadyCancelled) {
+      if (sub.clientId) {
+        await Client.findByIdAndUpdate(sub.clientId, {
+          $inc: {
+            totalPaid: -sub.pricePaid,
+            totalSubscriptions: -1,
+          },
+        }).catch(() => {});
+      }
+      if (sub.partnerId) {
+        await User.findByIdAndUpdate(sub.partnerId, {
+          $inc: {
+            totalRevenue: -sub.pricePaid,
+            totalCommission: -(sub.commissionAmount || 0),
+            totalSubscriptions: -1,
+          },
+        }).catch(() => {});
+      }
     }
 
     res.json({ success: true, message: "Abonnement annulé" });

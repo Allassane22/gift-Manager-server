@@ -114,14 +114,30 @@ const createSubscription = async ({
     throw err; // rien à annuler
   }
 
-  // ── 3. Assigner le client au profil ───────────────────────────────────────
+  // ── 3. Assigner le client au profil (opération atomique) ─────────────────
+  // findOneAndUpdate avec filtre { assignedClients: { $size: 0 } } garantit
+  // qu'aucune requête concurrente n'a pris ce profil entre l'étape 1 et ici.
+  let updatedProfile;
   try {
-    profile.assignedClients.push(clientId);
-    await profile.save();
+    updatedProfile = await Profile.findOneAndUpdate(
+      {
+        _id: profile._id,
+        isActive: true,
+        deletedAt: null,
+        assignedClients: { $size: 0 },
+      },
+      { $push: { assignedClients: clientId } },
+      { new: true },
+    );
   } catch (err) {
-    // Rollback : supprimer l'abonnement créé
     await Subscription.findByIdAndDelete(subscription._id).catch(() => {});
     throw { status: 500, message: 'Erreur assignation profil, abonnement annulé', detail: err.message };
+  }
+
+  if (!updatedProfile) {
+    // Profil pris par une requête concurrente juste avant nous
+    await Subscription.findByIdAndDelete(subscription._id).catch(() => {});
+    throw { status: 409, message: "Ce profil vient d'être assigné à un autre client. Veuillez réessayer." };
   }
 
   // ── 4. Màj stats client ───────────────────────────────────────────────────
@@ -254,16 +270,32 @@ const migrateSubscription = async ({ subscriptionId, newAccountId, newProfileId,
     throw { status: 500, message: 'Erreur libération ancien profil', detail: err.message };
   }
 
-  // ── 3. Assigner au nouveau profil ─────────────────────────────────────────
+  // ── 3. Assigner au nouveau profil (opération atomique) ───────────────────
+  let assignedNewProfile;
   try {
-    newProfile.assignedClients.push(clientId);
-    await newProfile.save();
+    assignedNewProfile = await Profile.findOneAndUpdate(
+      {
+        _id: newProfile._id,
+        isActive: true,
+        deletedAt: null,
+        assignedClients: { $size: 0 },
+      },
+      { $push: { assignedClients: clientId } },
+      { new: true },
+    );
   } catch (err) {
-    // Rollback : réassigner l'ancien profil
     await Profile.findByIdAndUpdate(oldProfileId, {
       $push: { assignedClients: clientId },
     }).catch(() => {});
     throw { status: 500, message: 'Erreur assignation nouveau profil', detail: err.message };
+  }
+
+  if (!assignedNewProfile) {
+    // Profil pris par une requête concurrente
+    await Profile.findByIdAndUpdate(oldProfileId, {
+      $push: { assignedClients: clientId },
+    }).catch(() => {});
+    throw { status: 409, message: "Le nouveau profil vient d'être assigné à un autre client. Veuillez réessayer." };
   }
 
   // ── 4. Màj subscription ───────────────────────────────────────────────────

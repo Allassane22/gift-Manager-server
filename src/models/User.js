@@ -26,7 +26,14 @@ const userSchema = new mongoose.Schema({
     required: [true, 'Nom requis'],
     trim: true,
   },
-  phone: { type: String, trim: true },
+  phone: {
+    type: String,
+    trim: true,
+    validate: {
+      validator: (v) => !v || /^\+?[0-9]{7,15}$/.test(v), // optionnel mais validé si présent
+      message: 'Numéro de téléphone invalide (ex: +22376543210 ou 76543210)',
+    },
+  },
   isActive: { type: Boolean, default: true },
   is2FAEnabled: { type: Boolean, default: false },
   twoFASecret: { type: String, select: false },
@@ -36,6 +43,8 @@ const userSchema = new mongoose.Schema({
   totalCommission: { type: Number, default: 0 },
   totalSubscriptions: { type: Number, default: 0 },
   lastLoginAt: { type: Date },
+  resetPasswordToken:   { type: String, select: false }, // hash du token de reset
+  resetPasswordExpires: { type: Date,   select: false }, // expiration (15 min)
   deletedAt: { type: Date, default: null }, // soft delete
 }, {
   timestamps: true,

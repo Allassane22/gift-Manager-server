@@ -161,17 +161,24 @@ router.delete('/:id', restrict('admin'), async (req, res, next) => {
     const invalidId = ensureValidObjectId(req.params.id, "ID d'achat invalide");
     if (invalidId) return res.status(400).json(invalidId);
 
-    const purchase = await Purchase.findByIdAndUpdate(
-      req.params.id,
-      { $set: { deletedAt: new Date(), status: 'cancelled' } },
-      { new: true }
-    );
+    // Récupérer avant update pour lire le statut actuel
+    const purchase = await Purchase.findById(req.params.id);
     if (!purchase) return res.status(404).json({ success: false, message: 'Introuvable' });
 
-    // Décrémenter stats client si annulé
-    await Client.findByIdAndUpdate(purchase.clientId, {
-      $inc: { totalPaid: -purchase.pricePaid },
-    });
+    // Si déjà annulé, ne pas re-décrémenter (évite totalPaid négatif)
+    const alreadyCancelled = purchase.status === 'cancelled';
+
+    await Purchase.findByIdAndUpdate(
+      req.params.id,
+      { $set: { deletedAt: new Date(), status: 'cancelled' } },
+    );
+
+    // Décrémenter stats client uniquement si l'achat n'était pas déjà annulé
+    if (!alreadyCancelled) {
+      await Client.findByIdAndUpdate(purchase.clientId, {
+        $inc: { totalPaid: -purchase.pricePaid },
+      });
+    }
 
     res.json({ success: true, message: 'Achat annulé' });
   } catch (err) {
@@ -181,8 +188,10 @@ router.delete('/:id', restrict('admin'), async (req, res, next) => {
 
 // ─── POST /api/purchases/:id/proof ───────────────────────────────────────────
 // Upload d'une preuve de paiement → passe pending_payment → pending (prêt à livrer)
+// restrict('admin') : seul l'admin peut valider une preuve de paiement
 router.post(
   '/:id/proof',
+  restrict('admin'),
   handleUpload(uploadPurchaseProof),
   async (req, res, next) => {
     try {

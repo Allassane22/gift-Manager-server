@@ -63,9 +63,15 @@ router.get('/:id', async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
     if (invalidId) return res.status(400).json(invalidId);
- 
+
     const client = await Client.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, message: 'Client introuvable' });
+
+    // Un partenaire ne peut consulter que ses propres clients
+    if (req.user.role === 'partner' &&
+        String(client.referredBy) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Accès refusé' });
+    }
  
     const subscriptions = await Subscription.find({ clientId: req.params.id, deletedAt: null })
       .populate('accountId', 'service type email password')

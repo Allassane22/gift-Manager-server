@@ -3,6 +3,16 @@ const router = express.Router();
 const { protect } = require('../middleware/auth.middleware');
 const authService = require('../services/auth.service');
 
+// ─── Helpers cookie ───────────────────────────────────────────────────────────
+const REFRESH_COOKIE = 'refreshToken';
+const cookieOptions = {
+  httpOnly: true,                                      // inaccessible via JS — protège contre XSS
+  secure: process.env.NODE_ENV === 'production',       // HTTPS uniquement en prod
+  sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax', // 'None' requis pour cross-origin Vercel→Render
+  maxAge: 30 * 24 * 60 * 60 * 1000,                  // 30 jours en ms
+  path: '/',
+};
+
 // POST /api/auth/login
 router.post('/login', async (req, res, next) => {
   try {
@@ -15,7 +25,12 @@ router.post('/login', async (req, res, next) => {
       ip: req.ip,
       userAgent: req.get('User-Agent'),
     });
-    res.json({ success: true, data: result });
+
+    // refreshToken → cookie HttpOnly (jamais exposé au JS)
+    res.cookie(REFRESH_COOKIE, result.refreshToken, cookieOptions);
+
+    // accessToken → body JSON (stocké en mémoire React uniquement)
+    res.json({ success: true, data: { accessToken: result.accessToken, user: result.user } });
   } catch (err) {
     next(err);
   }
@@ -24,9 +39,13 @@ router.post('/login', async (req, res, next) => {
 // POST /api/auth/refresh
 router.post('/refresh', async (req, res, next) => {
   try {
-    const { refreshToken } = req.body;
+    // Lire depuis le cookie HttpOnly (prioritaire) ou fallback body pour compatibilité
+    const refreshToken = req.cookies?.[REFRESH_COOKIE] || req.body?.refreshToken;
     const tokens = await authService.refreshTokens(refreshToken);
-    res.json({ success: true, data: tokens });
+
+    // Réémettre le cookie refreshToken avec les nouvelles valeurs
+    res.cookie(REFRESH_COOKIE, tokens.refreshToken, cookieOptions);
+    res.json({ success: true, data: { accessToken: tokens.accessToken } });
   } catch (err) {
     next(err);
   }
@@ -36,6 +55,8 @@ router.post('/refresh', async (req, res, next) => {
 router.post('/logout', protect, async (req, res, next) => {
   try {
     await authService.logout(req.user._id);
+    // Effacer le cookie refreshToken
+    res.clearCookie(REFRESH_COOKIE, { ...cookieOptions, maxAge: 0 });
     res.json({ success: true, message: 'Déconnecté avec succès' });
   } catch (err) {
     next(err);
@@ -76,4 +97,29 @@ router.put('/password', protect, async (req, res, next) => {
     res.json({ success: true, message: 'Mot de passe changé avec succès' });
   } catch (err) { next(err); }
 });
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: 'Email requis' });
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    await authService.forgotPassword(email, frontendUrl);
+    // Réponse identique qu'il existe ou non (anti-énumération)
+    res.json({ success: true, message: 'Si cet email existe, un lien de réinitialisation a été envoyé.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/reset-password
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, newPassword } = req.body;
+    await authService.resetPassword(token, newPassword);
+    res.json({ success: true, message: 'Mot de passe réinitialisé avec succès. Vous pouvez vous connecter.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
