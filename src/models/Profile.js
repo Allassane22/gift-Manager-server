@@ -38,7 +38,9 @@ profileSchema.pre('save', function (next) {
 // Virtual : disponible ?
 profileSchema.virtual('isAvailable').get(function () {
   if (this.isFreeTrial) return true; // multi-clients OK
-  return this.assignedClients.length === 0;
+  const clients = this.assignedClients || [];
+  const realClients = clients.filter(c => c !== null && c !== undefined);
+  return realClients.length === 0;
 });
 
 profileSchema.pre(/^find/, function (next) {
