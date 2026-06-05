@@ -50,7 +50,7 @@ router.get('/', ownDataOnly, async (req, res, next) => {
         .sort({ endDate: 1 });
  
       const refreshed = await refreshStatusBatch(subscriptions);
-      return { ...client.toJSON(), subscriptions: refreshed };
+      return { ...client.toObject({ virtuals: false }), id: client._id, subscriptions: refreshed };
     }));
  
     const total = await Client.countDocuments(filter);
@@ -82,7 +82,7 @@ router.get('/:id', async (req, res, next) => {
     
     const refreshed = await refreshStatusBatch(subscriptions);
  
-    res.json({ success: true, data: { ...client.toJSON(), subscriptions: refreshed } });
+    res.json({ success: true, data: { ...client.toObject({ virtuals: false }), id: client._id, subscriptions: refreshed } });
   } catch (err) { next(err); }
 });
 
