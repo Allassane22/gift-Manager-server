@@ -38,8 +38,8 @@ profileSchema.pre('save', function (next) {
 // Virtual : disponible ?
 profileSchema.virtual('isAvailable').get(function () {
   if (this.isFreeTrial) return true; // multi-clients OK
-  // Ignorer les ObjectIds fantômes (clients soft-deletés) après populate
-  const realClients = (this.assignedClients || []).filter(c => c !== null && c !== undefined);
+  const clients = this.assignedClients || [];
+  const realClients = clients.filter(c => c !== null && c !== undefined);
   return realClients.length === 0;
 });
 
