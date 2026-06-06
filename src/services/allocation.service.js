@@ -77,6 +77,7 @@ const createSubscription = async ({
   commissionType = 'none',
   commissionValue = 0,
   doneBy,
+  initialStatus = 'active', // 'pending_payment' si le client n'a pas encore payé
 }) => {
   // ── 1. Trouver le slot ────────────────────────────────────────────────────
   let account, profile;
@@ -108,7 +109,7 @@ const createSubscription = async ({
       pricePaid,
       commissionType,
       commissionValue,
-      status: 'active',
+      status: initialStatus,
     });
   } catch (err) {
     throw err; // rien à annuler

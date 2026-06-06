@@ -253,6 +253,10 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       commissionValue,
     } = parsed.data;
 
+    // status optionnel : seul 'pending_payment' est accepté à la création
+    const rawStatus = req.body.status;
+    const initialStatus = rawStatus === 'pending_payment' ? 'pending_payment' : 'active';
+
     // ── Validation des dates ──────────────────────────────────────────────────
     const parsedStart = dayjs.utc(startDate || new Date());
     const parsedEnd   = dayjs.utc(endDate);
@@ -286,6 +290,7 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       commissionType,
       commissionValue: Number(commissionValue || 0),
       doneBy: req.user._id,
+      initialStatus,
     });
 
     res
