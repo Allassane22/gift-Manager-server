@@ -141,6 +141,16 @@ router.put('/:type', protect, restrict('admin'), async (req, res) => {
       });
     }
 
+    // #32 : WhatsApp limite les messages à ~4096 caractères
+    // Un body trop long génère des liens wa.me tronqués silencieusement
+    const MAX_BODY_LENGTH = 4096;
+    if (body && body.trim().length > MAX_BODY_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Le corps du template ne peut pas dépasser ${MAX_BODY_LENGTH} caractères (actuellement : ${body.trim().length})`,
+      });
+    }
+
     const update = {};
     if (body && typeof body === 'string' && body.trim()) {
       update.body = body.trim();
@@ -174,20 +184,21 @@ router.put('/:type', protect, restrict('admin'), async (req, res) => {
 });
 
 // ─── POST /api/whatsapp-templates/seed ───────────────────────────────────────
-// Admin seulement — initialise les 7 templates (idempotent)
+// Admin seulement — initialise les 7 templates (idempotent).
+// #34 : Utilise findOneAndUpdate avec upsert:true plutôt que findOne+create
+// pour éviter la race condition entre vérification et insertion.
 router.post('/seed', protect, restrict('admin'), async (req, res) => {
   try {
     const results = [];
 
     for (const tpl of DEFAULT_TEMPLATES) {
-      const existing = await WhatsAppTemplate.findOne({ type: tpl.type });
-
-      if (existing) {
-        results.push({ type: tpl.type, status: 'skipped' });
-      } else {
-        await WhatsAppTemplate.create(tpl);
-        results.push({ type: tpl.type, status: 'created' });
-      }
+      const result = await WhatsAppTemplate.findOneAndUpdate(
+        { type: tpl.type },                       // filtre : type unique
+        { $setOnInsert: tpl },                    // n'écrit que si insertion (nouveau doc)
+        { upsert: true, new: false, select: '_id' } // new:false → null si insertion
+      );
+      // result === null → document inséré ; result !== null → document existait déjà
+      results.push({ type: tpl.type, status: result === null ? 'created' : 'skipped' });
     }
 
     const created = results.filter(r => r.status === 'created').length;

@@ -6,6 +6,7 @@ const { restrict, ownDataOnly } = require('../middleware/rbac.middleware');
 const Client = require('../models/Client');
 const Subscription = require('../models/Subscription');
 const Profile = require('../models/Profile');
+const AuditLog = require('../models/AuditLog');
 // ✅ Import manquant ajouté
 const { refreshStatusBatch } = require('../services/status.service');
 
@@ -50,7 +51,7 @@ router.get('/', ownDataOnly, async (req, res, next) => {
         .sort({ endDate: 1 });
  
       const refreshed = await refreshStatusBatch(subscriptions);
-      return { ...client.toObject({ virtuals: false }), id: client._id, subscriptions: refreshed };
+      return { ...client.toJSON(), subscriptions: refreshed };
     }));
  
     const total = await Client.countDocuments(filter);
@@ -82,7 +83,7 @@ router.get('/:id', async (req, res, next) => {
     
     const refreshed = await refreshStatusBatch(subscriptions);
  
-    res.json({ success: true, data: { ...client.toObject({ virtuals: false }), id: client._id, subscriptions: refreshed } });
+    res.json({ success: true, data: { ...client.toJSON(), subscriptions: refreshed } });
   } catch (err) { next(err); }
 });
 
@@ -141,6 +142,17 @@ router.delete('/:id', restrict('admin'), async (req, res, next) => {
     // 3. Soft-delete le client
     client.deletedAt = now;
     await client.save();
+
+    // ── #33 : Audit log ───────────────────────────────────────────────────────
+    await AuditLog.create({
+      userId: req.user._id,
+      action: 'DELETE_CLIENT',
+      targetModel: 'Client',
+      targetId: clientId,
+      details: { name: client.name, phone: client.phone },
+    }).catch((err) => {
+      console.error('[client.delete] ⚠️ AuditLog non enregistré:', err.message);
+    });
 
     res.json({ success: true, message: 'Client supprimé, abonnements annulés et profils libérés' });
   } catch (err) { next(err); }

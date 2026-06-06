@@ -189,7 +189,9 @@ const createSubscription = async ({
       profileId: profile._id,
       profit: subscription.profit,
     },
-  }).catch(() => {}); // échec silencieux pour ne pas bloquer la réponse
+  }).catch((err) => {
+    console.error('[allocation] ⚠️ AuditLog CREATE_SUBSCRIPTION non enregistré:', err.message);
+  });
 
   return subscription;
 };
@@ -217,11 +219,24 @@ const renewSubscription = async ({ subscriptionId, newEndDate, newPricePaid, don
 
   await subscription.save();
 
+  // ── Audit log (best-effort) ───────────────────────────────────────────────
+  await AuditLog.create({
+    userId: doneBy,
+    action: 'RENEW_SUBSCRIPTION',
+    targetModel: 'Subscription',
+    targetId: subscription._id,
+    details: { newEndDate, newPricePaid },
+  }).catch((err) => {
+    console.error('[allocation] ⚠️ AuditLog RENEW_SUBSCRIPTION non enregistré:', err.message);
+  });
+
   // ── Màj stats client ──────────────────────────────────────────────────────
   const amountToAdd = newPricePaid !== undefined ? newPricePaid : oldPricePaid;
   await Client.findByIdAndUpdate(subscription.clientId, {
     $inc: { totalPaid: amountToAdd },
-  }).catch(() => {});
+  }).catch((err) => {
+    console.error('[allocation] ⚠️ Stats client non mises à jour (renew) — dérive possible:', err.message, { subscriptionId, clientId: subscription.clientId });
+  });
 
   // ── Màj stats partenaire ──────────────────────────────────────────────────
   if (subscription.partnerId) {
@@ -230,7 +245,9 @@ const renewSubscription = async ({ subscriptionId, newEndDate, newPricePaid, don
         totalRevenue: amountToAdd,
         totalCommission: subscription.commissionAmount,
       },
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error('[allocation] ⚠️ Stats partenaire non mises à jour (renew) — dérive possible:', err.message, { subscriptionId, partnerId: subscription.partnerId });
+    });
   }
 
   return subscription;
@@ -320,6 +337,17 @@ const migrateSubscription = async ({ subscriptionId, newAccountId, newProfileId,
     }).catch(() => {});
     throw { status: 500, message: 'Erreur màj abonnement lors de la migration', detail: err.message };
   }
+
+  // ── Audit log (best-effort) ───────────────────────────────────────────────
+  await AuditLog.create({
+    userId: doneBy,
+    action: 'MIGRATE_SUBSCRIPTION',
+    targetModel: 'Subscription',
+    targetId: subscription._id,
+    details: { oldAccountId, oldProfileId, newAccountId, newProfileId, reason },
+  }).catch((err) => {
+    console.error('[allocation] ⚠️ AuditLog MIGRATE_SUBSCRIPTION non enregistré:', err.message);
+  });
 
   return subscription;
 };

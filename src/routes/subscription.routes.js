@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
+const { z } = require("zod");
 const { protect } = require("../middleware/auth.middleware");
 const { restrict, ownDataOnly } = require("../middleware/rbac.middleware");
 const { handleUpload, uploadSubscriptionProof } = require("../middleware/upload.middleware");
@@ -14,6 +15,7 @@ const Subscription = require("../models/Subscription");
 const Profile = require("../models/Profile");
 const Client = require("../models/Client");
 const User = require("../models/User");
+const AuditLog = require("../models/AuditLog");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 dayjs.extend(utc);
@@ -63,6 +65,24 @@ function ensureValidObjectId(id, label = "Identifiant invalide") {
     ? null
     : { success: false, message: label };
 }
+
+// ─── Schéma Zod : création d'abonnement (#27) ─────────────────────────────────
+// Valide les champs non couverts par les checks manuels existants
+// (commissionType, commissionValue, notes, service longueur, etc.)
+const createSubscriptionSchema = z.object({
+  clientId:        z.string().min(1, 'clientId requis'),
+  service:         z.string().min(1, 'service requis').max(100, 'service trop long'),
+  endDate:         z.string().min(1, 'endDate requise'),
+  purchasePrice:   z.number({ invalid_type_error: 'purchasePrice doit être un nombre' }).min(0),
+  pricePaid:       z.number({ invalid_type_error: 'pricePaid doit être un nombre' }).min(0),
+  accountId:       z.string().optional().nullable(),
+  profileId:       z.string().optional().nullable(),
+  partnerId:       z.string().optional().nullable(),
+  startDate:       z.string().optional().nullable(),
+  commissionType:  z.enum(['fixed', 'percentage', 'none']).optional().default('none'),
+  commissionValue: z.number().min(0).optional().default(0),
+  notes:           z.string().max(500, 'notes trop longues (max 500 car.)').optional(),
+});
 
 // ─── GET /api/subscriptions ───────────────────────────────────────────────────
 // Filtres: ?partnerId=&status=&service=&page=&limit=&expiringSoon=true
@@ -210,6 +230,15 @@ router.post(
 // ─── POST /api/subscriptions ──────────────────────────────────────────────────
 router.post("/", restrict("admin"), async (req, res, next) => {
   try {
+    const normalized = normalizeSubscriptionFields(req.body);
+
+    // ── Validation Zod (#27) ──────────────────────────────────────────────────
+    const parsed = createSubscriptionSchema.safeParse(normalized);
+    if (!parsed.success) {
+      const message = parsed.error.issues.map(i => i.message).join(', ');
+      return res.status(400).json({ success: false, message });
+    }
+
     const {
       clientId,
       service,
@@ -222,30 +251,7 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       pricePaid,
       commissionType,
       commissionValue,
-    } = normalizeSubscriptionFields(req.body);
-
-    if (
-      !clientId ||
-      !service ||
-      !endDate ||
-      purchasePrice === undefined ||
-      purchasePrice === null ||
-      pricePaid === undefined ||
-      pricePaid === null
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Champs obligatoires manquants" });
-    }
-    if (
-      [purchasePrice, pricePaid, commissionValue].some(
-        (value) => value !== null && value !== undefined && Number.isNaN(value),
-      )
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Montants invalides" });
-    }
+    } = parsed.data;
 
     // ── Validation des dates ──────────────────────────────────────────────────
     const parsedStart = dayjs.utc(startDate || new Date());
@@ -349,7 +355,9 @@ router.put("/:id", restrict("admin"), async (req, res, next) => {
     if (pricePaid !== undefined && pricePaid !== null && pricePaid !== oldPricePaid) {
       await Client.findByIdAndUpdate(sub.clientId, {
         $inc: { totalPaid: pricePaid - oldPricePaid },
-      }).catch(() => {});
+      }).catch((err) => {
+        console.error('[subscription.put] ⚠️ Stats client non mises à jour — dérive possible:', err.message, { subId: req.params.id });
+      });
     }
 
     res.json({ success: true, data: sub, message: "Abonnement mis à jour" });
@@ -516,7 +524,9 @@ router.delete("/:id", restrict("admin"), async (req, res, next) => {
             totalPaid: -sub.pricePaid,
             totalSubscriptions: -1,
           },
-        }).catch(() => {});
+        }).catch((err) => {
+          console.error('[subscription.delete] ⚠️ Stats client non décrémentées:', err.message, { subId: req.params.id });
+        });
       }
       if (sub.partnerId) {
         await User.findByIdAndUpdate(sub.partnerId, {
@@ -525,9 +535,22 @@ router.delete("/:id", restrict("admin"), async (req, res, next) => {
             totalCommission: -(sub.commissionAmount || 0),
             totalSubscriptions: -1,
           },
-        }).catch(() => {});
+        }).catch((err) => {
+          console.error('[subscription.delete] ⚠️ Stats partenaire non décrémentées:', err.message, { subId: req.params.id });
+        });
       }
     }
+
+    // ── #33 : Audit log ───────────────────────────────────────────────────────
+    await AuditLog.create({
+      userId: req.user._id,
+      action: 'DELETE_SUBSCRIPTION',
+      targetModel: 'Subscription',
+      targetId: sub._id,
+      details: { clientId: sub.clientId, partnerId: sub.partnerId, status: sub.status },
+    }).catch((err) => {
+      console.error('[subscription.delete] ⚠️ AuditLog non enregistré:', err.message);
+    });
 
     res.json({ success: true, message: "Abonnement annulé" });
   } catch (err) {

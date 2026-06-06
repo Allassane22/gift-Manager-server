@@ -7,6 +7,8 @@ const Account = require('../models/Account');
 const Profile = require('../models/Profile');
 const Subscription = require('../models/Subscription');
 const ServiceConfig = require('../models/ServiceConfig');
+const User = require('../models/User');
+const AuditLog = require('../models/AuditLog');
 const { findAvailableSlot } = require('../services/allocation.service');
 
 router.use(protect, restrict('admin'));
@@ -242,7 +244,15 @@ router.delete('/:id', async (req, res, next) => {
     const profiles = await Profile.find({ accountId: account._id, deletedAt: null }, '_id');
     const profileIds = profiles.map(p => p._id);
 
+    // ── Récupérer les abonnements actifs avant de les annuler (pour décrémenter stats) ──
+    let activeSubs = [];
     if (profileIds.length > 0) {
+      activeSubs = await Subscription.find({
+        profileId: { $in: profileIds },
+        deletedAt: null,
+        status: { $nin: ['cancelled'] },
+      }).select('clientId partnerId pricePaid commissionAmount');
+
       await Subscription.updateMany(
         { profileId: { $in: profileIds }, deletedAt: null },
         { $set: { deletedAt: now, status: 'cancelled' } }
@@ -260,6 +270,39 @@ router.delete('/:id', async (req, res, next) => {
     );
 
     await Account.findByIdAndUpdate(req.params.id, { $set: { deletedAt: now, isActive: false } });
+
+    // ── #17 : Décrémenter les stats dénormalisées pour chaque abonnement annulé ──
+    for (const sub of activeSubs) {
+      if (sub.clientId) {
+        await User.findByIdAndUpdate(sub.clientId, {
+          $inc: { totalPaid: -sub.pricePaid, totalSubscriptions: -1 },
+        }).catch((err) => {
+          console.error('[account.delete] ⚠️ Stats client non décrémentées:', err.message, { clientId: sub.clientId });
+        });
+      }
+      if (sub.partnerId) {
+        await User.findByIdAndUpdate(sub.partnerId, {
+          $inc: {
+            totalRevenue: -sub.pricePaid,
+            totalCommission: -(sub.commissionAmount || 0),
+            totalSubscriptions: -1,
+          },
+        }).catch((err) => {
+          console.error('[account.delete] ⚠️ Stats partenaire non décrémentées:', err.message, { partnerId: sub.partnerId });
+        });
+      }
+    }
+
+    // ── #33 : Audit log ───────────────────────────────────────────────────────
+    await AuditLog.create({
+      userId: req.user._id,
+      action: 'DELETE_ACCOUNT',
+      targetModel: 'Account',
+      targetId: account._id,
+      details: { service: account.service, type: account.type, cancelledSubs: activeSubs.length },
+    }).catch((err) => {
+      console.error('[account.delete] ⚠️ AuditLog non enregistré:', err.message);
+    });
 
     res.json({ success: true, message: 'Compte désactivé, profils et abonnements liés annulés' });
   } catch (err) { next(err); }

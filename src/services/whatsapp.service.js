@@ -7,7 +7,8 @@ dayjs.extend(utc);
 const WhatsAppTemplate = require('../models/WhatsAppTemplate');
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
-const PAYMENT_NUMBER = '+223 93 68 59 78';
+// Lire depuis l'env, fallback sur la valeur par défaut si non défini
+const PAYMENT_NUMBER = process.env.PAYMENT_WAVE_NUMBER || '+223 93 68 59 78';
 
 // Message de fallback si le template est absent en base
 const FALLBACK_BODY = `Bonjour {{prenom}} 👋

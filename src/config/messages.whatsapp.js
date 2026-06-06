@@ -1,17 +1,15 @@
 /**
  * messages.whatsapp.js
  * ─────────────────────────────────────────────────────────────────
- * Templates de messages WhatsApp configurables.
+ * ⚠️  DÉPRÉCIÉ — Ce fichier n'est plus la source de vérité.
  *
- * Variables disponibles (interpolées automatiquement) :
- *   {{prenom}}     → premier mot du nom client
- *   {{service}}    → nom du service (Netflix, Spotify…)
- *   {{date}}       → date d'expiration formatée (DD/MM/YYYY)
- *   {{montant}}    → montant en FCFA
- *   {{numero}}     → numéro de paiement Wave/Orange Money
+ * Les templates WhatsApp sont désormais stockés en base de données
+ * dans la collection `whatsapptemplates` (modèle WhatsAppTemplate).
+ * Pour les modifier : interface admin → /admin/whatsapp
+ * ou via POST /api/whatsapp-templates/seed pour initialiser.
  *
- * Pour modifier un message : éditez simplement le texte entre backticks.
- * Ne pas supprimer les balises {{…}}, elles sont remplacées dynamiquement.
+ * Ce fichier est conservé uniquement pour référence historique.
+ * Ne pas utiliser dans le code applicatif.
  * ─────────────────────────────────────────────────────────────────
  */
 

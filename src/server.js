@@ -131,6 +131,11 @@ if (process.env.NODE_ENV === "development") {
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
+// #20 : Servir les fichiers uploadés localement (fallback si Cloudinary non configuré).
+// En production avec Cloudinary, ce middleware est ignoré (dossier vide).
+// Accès : GET /uploads/proofs/subscriptions/<filename>
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
 app.use("/api/auth", authLimiter, authRoutes);
 // Limiter strict sur les routes sensibles d'authentification
 app.use("/api/auth/login", loginLimiter);
