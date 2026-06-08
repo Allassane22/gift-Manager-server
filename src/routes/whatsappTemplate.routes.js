@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 
 const WhatsAppTemplate = require('../models/WhatsAppTemplate');
+const { SYSTEM_TYPES } = require('../models/WhatsAppTemplate');
 const { protect } = require('../middleware/auth.middleware');
 const { restrict } = require('../middleware/rbac.middleware');
 
@@ -126,6 +127,70 @@ router.get('/:type', protect, restrict('admin', 'partner'), async (req, res) => 
   }
 });
 
+// ─── POST /api/whatsapp-templates ────────────────────────────────────────────
+// Admin seulement — crée un nouveau template personnalisé
+router.post('/', protect, restrict('admin'), async (req, res) => {
+  try {
+    const { type, label, body } = req.body;
+
+    if (!type || !label || !body) {
+      return res.status(400).json({ success: false, message: 'type, label et body sont requis' });
+    }
+
+    // Normaliser le type : minuscules + underscores
+    const normalizedType = type.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (!normalizedType) {
+      return res.status(400).json({ success: false, message: 'Type invalide' });
+    }
+
+    if (body.trim().length > 4096) {
+      return res.status(400).json({ success: false, message: `Message trop long (max 4096 caractères)` });
+    }
+
+    // Vérifier unicité
+    const existing = await WhatsAppTemplate.findOne({ type: normalizedType });
+    if (existing) {
+      return res.status(409).json({ success: false, message: `Un template avec le type "${normalizedType}" existe déjà` });
+    }
+
+    const template = await WhatsAppTemplate.create({
+      type: normalizedType,
+      label: label.trim(),
+      body: body.trim(),
+      isSystem: false,
+      isActive: true,
+    });
+
+    res.status(201).json({ success: true, data: template });
+  } catch (err) {
+    console.error('[WhatsAppTemplates] POST /', err);
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+});
+
+// ─── DELETE /api/whatsapp-templates/:type ────────────────────────────────────
+// Admin seulement — supprime un template personnalisé (pas les templates système)
+router.delete('/:type', protect, restrict('admin'), async (req, res) => {
+  try {
+    const template = await WhatsAppTemplate.findOne({ type: req.params.type, deletedAt: null });
+
+    if (!template) {
+      return res.status(404).json({ success: false, message: `Template "${req.params.type}" introuvable` });
+    }
+
+    if (SYSTEM_TYPES.includes(template.type)) {
+      return res.status(403).json({ success: false, message: 'Les templates système ne peuvent pas être supprimés' });
+    }
+
+    await WhatsAppTemplate.findByIdAndUpdate(template._id, { $set: { deletedAt: new Date() } });
+
+    res.json({ success: true, message: `Template "${template.label}" supprimé` });
+  } catch (err) {
+    console.error('[WhatsAppTemplates] DELETE /:type', err);
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+});
+
 // ─── PUT /api/whatsapp-templates/:type ───────────────────────────────────────
 // Admin seulement — modifie body, label et/ou isActive
 router.put('/:type', protect, restrict('admin'), async (req, res) => {
@@ -193,9 +258,9 @@ router.post('/seed', protect, restrict('admin'), async (req, res) => {
 
     for (const tpl of DEFAULT_TEMPLATES) {
       const result = await WhatsAppTemplate.findOneAndUpdate(
-        { type: tpl.type },                       // filtre : type unique
-        { $setOnInsert: tpl },                    // n'écrit que si insertion (nouveau doc)
-        { upsert: true, new: false, select: '_id' } // new:false → null si insertion
+        { type: tpl.type },
+        { $setOnInsert: { ...tpl, isSystem: true } },
+        { upsert: true, new: false, select: '_id' }
       );
       // result === null → document inséré ; result !== null → document existait déjà
       results.push({ type: tpl.type, status: result === null ? 'created' : 'skipped' });

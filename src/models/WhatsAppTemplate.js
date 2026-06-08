@@ -2,7 +2,8 @@
 
 const mongoose = require('mongoose');
 
-const TEMPLATE_TYPES = [
+// Types système — ne peuvent pas être supprimés
+const SYSTEM_TYPES = [
   'reminder',
   'expired',
   'renewal',
@@ -16,24 +17,31 @@ const whatsAppTemplateSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: TEMPLATE_TYPES,
       required: true,
       unique: true,
       trim: true,
+      lowercase: true,
+      match: [/^[a-z0-9_]+$/, 'Le type ne peut contenir que des lettres minuscules, chiffres et underscores'],
     },
     label: {
       type: String,
       required: true,
       trim: true,
+      maxlength: [80, 'Label trop long (max 80 caractères)'],
     },
     body: {
       type: String,
       required: true,
       trim: true,
+      maxlength: [4096, 'Message trop long (max 4096 caractères)'],
     },
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isSystem: {
+      type: Boolean,
+      default: false, // true pour les 7 templates par défaut
     },
     deletedAt: {
       type: Date,
@@ -43,8 +51,7 @@ const whatsAppTemplateSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Index utile pour les lookups fréquents par type
 whatsAppTemplateSchema.index({ type: 1 });
 
 module.exports = mongoose.model('WhatsAppTemplate', whatsAppTemplateSchema);
-module.exports.TEMPLATE_TYPES = TEMPLATE_TYPES;
+module.exports.SYSTEM_TYPES = SYSTEM_TYPES;
