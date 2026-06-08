@@ -116,7 +116,7 @@ router.get("/", ownDataOnly, async (req, res, next) => {
 
     const subscriptions = await Subscription.find(filter)
       .populate("clientId", "name phone email")
-      .populate("accountId", "service type email maxSlots")
+      .populate("accountId", "service type email password maxSlots")
       .populate("profileId", "name pin")
       .populate("partnerId", "name email")
       .sort({ endDate: 1 })
