@@ -38,6 +38,11 @@ const accountSchema = new mongoose.Schema({
     min: 0,
   },
   notes: { type: String, trim: true },
+  cardLast4: {
+    type: String,
+    default: null,
+    match: [/^\d{4}$/, 'cardLast4 doit contenir exactement 4 chiffres'],
+  },
   isActive: { type: Boolean, default: true },
   deletedAt: { type: Date, default: null },
 }, {

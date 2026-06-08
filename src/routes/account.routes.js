@@ -20,6 +20,12 @@ function normalizeOptionalAccountFields(payload = {}) {
   if (typeof normalized.notes === 'string') normalized.notes = normalized.notes.trim() || '';
   if (typeof normalized.assignedPartner === 'string') normalized.assignedPartner = normalized.assignedPartner.trim() || null;
   if (normalized.purchasePrice !== undefined) normalized.purchasePrice = Number(normalized.purchasePrice);
+  // Extraire les 4 derniers chiffres si un numéro de carte est fourni
+  if (typeof normalized.cardNumber === 'string') {
+    const digits = normalized.cardNumber.replace(/\D/g, '');
+    normalized.cardLast4 = digits.length >= 4 ? digits.slice(-4) : null;
+    delete normalized.cardNumber;
+  }
   return normalized;
 }
 
@@ -87,7 +93,7 @@ router.get('/', async (req, res, next) => {
 // POST /api/accounts
 router.post('/', async (req, res, next) => {
   try {
-    const { service, type, email, password, purchasePrice, assignedPartner, notes } =
+    const { service, type, email, password, purchasePrice, assignedPartner, notes, cardLast4 } =
       normalizeOptionalAccountFields(req.body);
 
     if (!service || !type || !email || !password || purchasePrice === undefined) {
@@ -95,6 +101,17 @@ router.post('/', async (req, res, next) => {
     }
     if (Number.isNaN(purchasePrice)) {
       return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
+    }
+
+    // Vérifier la limite de 3 comptes par carte
+    if (cardLast4) {
+      const cardCount = await Account.countDocuments({ cardLast4, deletedAt: null });
+      if (cardCount >= 3) {
+        return res.status(400).json({
+          success: false,
+          message: `La carte se terminant par ${cardLast4} est déjà utilisée sur 3 comptes (limite atteinte)`,
+        });
+      }
     }
 
     // Résoudre maxSlots depuis ServiceConfig
@@ -113,6 +130,7 @@ router.post('/', async (req, res, next) => {
       service, type, email, password, purchasePrice,
       assignedPartner: assignedPartner || null,
       notes, maxSlots,
+      cardLast4: cardLast4 || null,
     });
 
     // Créer automatiquement les profils selon maxSlots
@@ -160,14 +178,30 @@ router.put('/:id', async (req, res, next) => {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
     if (invalidId) return res.status(400).json(invalidId);
 
-    const { email, password, purchasePrice, assignedPartner, notes, isActive, service, type } =
+    const { email, password, purchasePrice, assignedPartner, notes, isActive, service, type, cardLast4 } =
       normalizeOptionalAccountFields(req.body);
 
     if (purchasePrice !== undefined && Number.isNaN(purchasePrice)) {
       return res.status(400).json({ success: false, message: "Prix d'achat invalide" });
     }
 
+    // Vérifier la limite de 3 comptes par carte (en excluant le compte actuel)
+    if (cardLast4 !== undefined) {
+      const cardCount = await Account.countDocuments({
+        cardLast4,
+        deletedAt: null,
+        _id: { $ne: req.params.id },
+      });
+      if (cardCount >= 3) {
+        return res.status(400).json({
+          success: false,
+          message: `La carte se terminant par ${cardLast4} est déjà utilisée sur 3 comptes (limite atteinte)`,
+        });
+      }
+    }
+
     const updates = { email, password, purchasePrice, assignedPartner, notes, isActive };
+    if (cardLast4 !== undefined) updates.cardLast4 = cardLast4 || null;
 
     if (service && type) {
       try {

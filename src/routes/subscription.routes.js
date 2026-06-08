@@ -178,6 +178,10 @@ router.get("/:id", async (req, res, next) => {
       endDate: sub.endDate,
       amount: sub.pricePaid,
       type: sub.status === "overdue" ? "expired" : "reminder",
+      profileName: sub.profileId?.name,
+      pin: sub.profileId?.pin,
+      accountEmail: sub.accountId?.email,
+      accountPassword: sub.accountId?.password,
     });
 
     res.json({
@@ -292,6 +296,18 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       doneBy: req.user._id,
       initialStatus,
     });
+
+    // ── Màj nom + PIN du profil si fournis ───────────────────────────────────
+    const profileName = req.body.profileName?.trim();
+    const profilePin  = req.body.profilePin?.trim();
+    if (profileName || profilePin) {
+      const updates = {};
+      if (profileName) updates.name = profileName;
+      if (profilePin)  updates.pin  = profilePin;
+      await Profile.findByIdAndUpdate(subscription.profileId, { $set: updates }).catch((err) => {
+        console.warn('[subscription] ⚠️ Màj nom/PIN profil échouée (non bloquant):', err.message);
+      });
+    }
 
     res
       .status(201)
