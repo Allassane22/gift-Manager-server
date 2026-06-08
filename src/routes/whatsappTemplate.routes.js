@@ -19,7 +19,9 @@ Votre abonnement *{{service}}* expire le *{{date}}*.
 💰 Montant du renouvellement : *{{montant}} FCFA*
 
 Renouvelez maintenant pour ne pas perdre l'accès ! ✅
-Paiement via Wave / Orange Money au *{{numero}}*`,
+Paiement via Wave / Orange Money au *{{numero}}*
+
+— ɲɛnajɛ 🙏`,
   },
   {
     type: 'expired',
@@ -30,7 +32,9 @@ Votre abonnement *{{service}}* a expiré le *{{date}}*.
 💰 Pour le renouveler : *{{montant}} FCFA*
 
 Contactez-nous dès que possible 🙏
-Paiement via Wave / Orange Money au *{{numero}}*`,
+Paiement via Wave / Orange Money au *{{numero}}*
+
+— ɲɛnajɛ`,
   },
   {
     type: 'renewal',
@@ -40,7 +44,8 @@ Paiement via Wave / Orange Money au *{{numero}}*`,
 Votre abonnement *{{service}}* a été renouvelé avec succès !
 📅 Valable jusqu'au : *{{date}}*
 
-Merci pour votre confiance 🎉`,
+Merci pour votre confiance 🎉
+— ɲɛnajɛ`,
   },
   {
     type: 'payment_request',
@@ -50,7 +55,9 @@ Merci pour votre confiance 🎉`,
 Votre abonnement *{{service}}* est prêt.
 💰 Montant : *{{montant}} FCFA*
 
-Merci d'effectuer le paiement via Wave ou Orange Money au *{{numero}}* puis de nous envoyer la capture d'écran de confirmation. 📲`,
+Merci d'effectuer le paiement via Wave ou Orange Money au *{{numero}}* puis de nous envoyer la capture d'écran de confirmation. 📲
+
+— ɲɛnajɛ`,
   },
   {
     type: 'payment_confirmed',
@@ -58,19 +65,22 @@ Merci d'effectuer le paiement via Wave ou Orange Money au *{{numero}}* puis de n
     body: `Bonjour {{prenom}} ✅
 
 Votre paiement de *{{montant}} FCFA* pour *{{service}}* a bien été reçu.
-🎉 Votre accès est activé — bonne lecture !`,
+🎉 Votre accès est activé — bonne lecture !
+
+— ɲɛnajɛ`,
   },
   {
     type: 'welcome',
     label: 'Bienvenue nouveau client',
     body: `Bonjour {{prenom}} 🎉
 
-Bienvenue chez *Netflix and ɲɛnajɛ* !
+Bienvenue chez *ɲɛnajɛ* !
 
 Votre abonnement *{{service}}* est maintenant actif.
 📅 Valable jusqu'au : *{{date}}*
 
-Pour toute question, répondez simplement à ce message. Bonne lecture ! 🍿`,
+Pour toute question, répondez simplement à ce message. Bonne lecture ! 🍿
+— ɲɛnajɛ`,
   },
   {
     type: 'win_back',
@@ -83,7 +93,9 @@ Votre dernier abonnement *{{service}}* a expiré depuis un moment.
 💰 Offre spéciale de retour : *{{montant}} FCFA*
 
 Revenez profiter de vos contenus préférés !
-Paiement via Wave / Orange Money au *{{numero}}* 🎬`,
+Paiement via Wave / Orange Money au *{{numero}}* 🎬
+
+— ɲɛnajɛ`,
   },
 ];
 
