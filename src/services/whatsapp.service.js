@@ -27,11 +27,15 @@ Paiement via Wave / Orange Money au *{{numero}}*`;
  */
 const interpolate = (body, vars) => {
   return body
-    .replace(/{{prenom}}/g,  vars.prenom  ?? '')
-    .replace(/{{service}}/g, vars.service ?? '')
-    .replace(/{{date}}/g,    vars.date    ?? '')
-    .replace(/{{montant}}/g, vars.montant ?? '')
-    .replace(/{{numero}}/g,  vars.numero  ?? PAYMENT_NUMBER);
+    .replace(/{{prenom}}/g,      vars.prenom      ?? '')
+    .replace(/{{service}}/g,     vars.service     ?? '')
+    .replace(/{{date}}/g,        vars.date        ?? '')
+    .replace(/{{montant}}/g,     vars.montant     ?? '')
+    .replace(/{{numero}}/g,      vars.numero      ?? PAYMENT_NUMBER)
+    .replace(/{{profil}}/g,      vars.profil      ?? '')
+    .replace(/{{pin}}/g,         vars.pin         ?? '')
+    .replace(/{{email}}/g,       vars.email       ?? '')
+    .replace(/{{motdepasse}}/g,  vars.motdepasse  ?? '');
 };
 
 // ─── Génération d'un lien WhatsApp ───────────────────────────────────────────
@@ -57,6 +61,10 @@ const generateWhatsAppLink = async ({
   amount,
   type = 'reminder',
   numero = PAYMENT_NUMBER,
+  profileName = '',
+  pin = '',
+  accountEmail = '',
+  accountPassword = '',
 }) => {
   // 1. Récupération du template en base
   let body = FALLBACK_BODY;
@@ -80,11 +88,15 @@ const generateWhatsAppLink = async ({
 
   // 2. Préparation des variables
   const vars = {
-    prenom:  clientName ? clientName.split(' ')[0] : '',
-    service: service ?? '',
-    date:    endDate ? dayjs.utc(endDate).format('DD/MM/YYYY') : '',
-    montant: amount != null ? String(amount) : '',
+    prenom:     clientName ? clientName.split(' ')[0] : '',
+    service:    service ?? '',
+    date:       endDate ? dayjs.utc(endDate).format('DD/MM/YYYY') : '',
+    montant:    amount != null ? String(amount) : '',
     numero,
+    profil:     profileName,
+    pin:        pin,
+    email:      accountEmail,
+    motdepasse: accountPassword,
   };
 
   // 3. Interpolation + encodage
@@ -110,12 +122,16 @@ const generateBatchReminderLinks = async (subscriptions) => {
       clientName: sub.clientId?.name,
       service: sub.accountId?.service,
       link: await generateWhatsAppLink({
-        phone:      sub.clientId?.phone,
-        clientName: sub.clientId?.name,
-        service:    sub.accountId?.service,
-        endDate:    sub.endDate,
-        amount:     sub.pricePaid,
-        type:       'reminder',
+        phone:           sub.clientId?.phone,
+        clientName:      sub.clientId?.name,
+        service:         sub.accountId?.service,
+        endDate:         sub.endDate,
+        amount:          sub.pricePaid,
+        type:            'reminder',
+        profileName:     sub.profileId?.name,
+        pin:             sub.profileId?.pin,
+        accountEmail:    sub.accountId?.email,
+        accountPassword: sub.accountId?.password,
       }),
     }))
   );
