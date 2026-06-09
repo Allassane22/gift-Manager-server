@@ -35,7 +35,8 @@ const interpolate = (body, vars) => {
     .replace(/{{profil}}/g,      vars.profil      ?? '')
     .replace(/{{pin}}/g,         vars.pin         ?? '')
     .replace(/{{email}}/g,       vars.email       ?? '')
-    .replace(/{{motdepasse}}/g,  vars.motdepasse  ?? '');
+    .replace(/{{motdepasse}}/g,  vars.motdepasse  ?? '')
+    .replace(/{{jours}}/g,       String(vars.jours ?? ''));
 };
 
 // ─── Génération d'un lien WhatsApp ───────────────────────────────────────────
@@ -97,6 +98,7 @@ const generateWhatsAppLink = async ({
     pin:        pin,
     email:      accountEmail,
     motdepasse: accountPassword,
+    jours:      endDate ? Math.max(0, dayjs.utc(endDate).diff(dayjs.utc(), 'day')) : '',
   };
 
   // 3. Interpolation + encodage
