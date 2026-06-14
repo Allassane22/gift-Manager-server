@@ -35,11 +35,7 @@ function ensureValidObjectId(id, label = 'Identifiant invalide') {
 
 // Génère les noms de profils selon le service et le nombre de slots
 function generateProfileNames(service, maxSlots) {
-  const singleProfile = ['Spotify', 'Apple Music', 'Snapchat+', 'Prime Video'];
-  if (singleProfile.includes(service) || maxSlots === 1) return ['Principal'];
-  if (service === 'Netflix') {
-    return ['Profil 1', 'Profil 2', 'Profil 3', 'Profil 4', 'Profil 5'].slice(0, maxSlots);
-  }
+  if (maxSlots === 1) return ['Principal'];
   if (maxSlots === 2) return ['Joueur 1', 'Joueur 2'];
   return Array.from({ length: maxSlots }, (_, i) => `Profil ${i + 1}`);
 }
