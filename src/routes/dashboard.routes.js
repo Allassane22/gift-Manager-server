@@ -195,4 +195,114 @@ router.get('/pending-proof', async (req, res, next) => {
   }
 });
 
+// GET /api/dashboard/renewal-rate
+// Taux de renouvellement : parmi les abonnements expirés il y a 30-60j,
+// combien ont été suivis d'un nouvel abonnement pour le même client+service
+router.get('/renewal-rate', async (req, res, next) => {
+  try {
+    const now = dayjs.utc();
+    const windowStart = now.subtract(60, 'day').toDate();
+    const windowEnd   = now.subtract(30, 'day').toDate();
+
+    const expiredCohort = await Subscription.find({
+      endDate: { $gte: windowStart, $lte: windowEnd },
+      deletedAt: null,
+    }).populate('accountId', 'service').lean();
+
+    if (expiredCohort.length === 0) {
+      return res.json({ success: true, data: { rate: 0, renewed: 0, total: 0 } });
+    }
+
+    let renewed = 0;
+    for (const sub of expiredCohort) {
+      const hasNewer = await Subscription.exists({
+        clientId: sub.clientId,
+        'accountId': sub.accountId,
+        startDate: { $gt: sub.endDate },
+        deletedAt: null,
+      });
+      if (hasNewer) renewed++;
+    }
+
+    const rate = Math.round((renewed / expiredCohort.length) * 100);
+    res.json({ success: true, data: { rate, renewed, total: expiredCohort.length } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/dashboard/top-services-margin
+// Classement des services par marge bénéficiaire (%)
+router.get('/top-services-margin', async (req, res, next) => {
+  try {
+    const result = await Subscription.aggregate([
+      { $match: { deletedAt: null } },
+      {
+        $lookup: {
+          from: 'accounts',
+          localField: 'accountId',
+          foreignField: '_id',
+          as: 'account',
+        },
+      },
+      { $unwind: '$account' },
+      {
+        $group: {
+          _id: '$account.service',
+          revenue: { $sum: '$pricePaid' },
+          profit: { $sum: '$profit' },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          service: '$_id',
+          revenue: 1,
+          profit: 1,
+          count: 1,
+          margin: {
+            $cond: [
+              { $eq: ['$revenue', 0] },
+              0,
+              { $round: [{ $multiply: [{ $divide: ['$profit', '$revenue'] }, 100] }, 1] },
+            ],
+          },
+        },
+      },
+      { $sort: { margin: -1 } },
+    ]);
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/dashboard/client-growth
+// Nouveaux clients par mois (basé sur leur date de création)
+router.get('/client-growth', async (req, res, next) => {
+  try {
+    const months = parseInt(req.query.months) || 6;
+    const startDate = dayjs.utc().subtract(months - 1, 'month').startOf('month').toDate();
+
+    const result = await Client.aggregate([
+      { $match: { createdAt: { $gte: startDate }, deletedAt: null } },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } },
+    ]);
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
