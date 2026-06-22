@@ -102,7 +102,9 @@ const generateWhatsAppLink = async ({
   };
 
   // 3. Interpolation + encodage
-  const cleanPhone = (phone || '').replace(/[\s\-\(\)]/g, '');
+  // Gère les numéros avec indicatif (+22374448155) et sans (74448155 → Mali par défaut)
+  const rawDigits = (phone || '').replace(/\D/g, '');
+  const cleanPhone = phone && phone.startsWith('+') ? rawDigits : '223' + rawDigits;
   if (!cleanPhone) return null;
 
   const message        = interpolate(body, vars);

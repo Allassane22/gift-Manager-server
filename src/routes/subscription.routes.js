@@ -232,7 +232,7 @@ router.post(
 );
 
 // ─── POST /api/subscriptions ──────────────────────────────────────────────────
-router.post("/", restrict("admin"), async (req, res, next) => {
+router.post("/", restrict("admin", "partner"), async (req, res, next) => {
   try {
     const normalized = normalizeSubscriptionFields(req.body);
 
@@ -243,7 +243,7 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       return res.status(400).json({ success: false, message });
     }
 
-    const {
+    let {
       clientId,
       service,
       accountId,
@@ -256,6 +256,20 @@ router.post("/", restrict("admin"), async (req, res, next) => {
       commissionType,
       commissionValue,
     } = parsed.data;
+
+    // ── Si partenaire : vérifier que le compte lui est bien assigné ───────────
+    if (req.user.role === 'partner') {
+      const Account = require('../models/Account');
+      const account = await Account.findById(accountId);
+      if (!account || String(account.assignedPartner) !== String(req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Ce compte ne vous est pas assigné',
+        });
+      }
+      // Le partenaire est automatiquement le partnerId
+      partnerId = req.user._id;
+    }
 
     // status optionnel : seul 'pending_payment' est accepté à la création
     const rawStatus = req.body.status;

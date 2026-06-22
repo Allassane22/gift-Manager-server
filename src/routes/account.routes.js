@@ -11,7 +11,7 @@ const User = require('../models/User');
 const AuditLog = require('../models/AuditLog');
 const { findAvailableSlot } = require('../services/allocation.service');
 
-router.use(protect, restrict('admin'));
+router.use(protect, restrict('admin', 'partner'));
 
 function normalizeOptionalAccountFields(payload = {}) {
   const normalized = { ...payload };
@@ -35,7 +35,11 @@ function ensureValidObjectId(id, label = 'Identifiant invalide') {
 
 // Génère les noms de profils selon le service et le nombre de slots
 function generateProfileNames(service, maxSlots) {
-  if (maxSlots === 1) return ['Principal'];
+  const singleProfile = ['Spotify', 'Apple Music', 'Snapchat+', 'Prime Video'];
+  if (singleProfile.includes(service) || maxSlots === 1) return ['Principal'];
+  if (service === 'Netflix') {
+    return ['Profil 1', 'Profil 2', 'Profil 3', 'Profil 4', 'Profil 5'].slice(0, maxSlots);
+  }
   if (maxSlots === 2) return ['Joueur 1', 'Joueur 2'];
   return Array.from({ length: maxSlots }, (_, i) => `Profil ${i + 1}`);
 }
@@ -46,6 +50,10 @@ router.get('/', async (req, res, next) => {
     const { service, hasSlots } = req.query;
     const filter = { deletedAt: null };
     if (service) filter.service = service;
+    // Un partenaire ne voit que ses comptes assignés
+    if (req.user.role === 'partner') {
+      filter.assignedPartner = req.user._id;
+    }
 
     const accounts = await Account.find(filter)
       .populate('assignedPartner', 'name email')
@@ -87,7 +95,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/accounts
-router.post('/', async (req, res, next) => {
+router.post('/', restrict('admin'), async (req, res, next) => {
   try {
     const { service, type, email, password, purchasePrice, assignedPartner, notes, cardLast4 } =
       normalizeOptionalAccountFields(req.body);
@@ -169,7 +177,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // PUT /api/accounts/:id
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', restrict('admin'), async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
     if (invalidId) return res.status(400).json(invalidId);
@@ -262,7 +270,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // DELETE /api/accounts/:id
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', restrict('admin'), async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de compte invalide');
     if (invalidId) return res.status(400).json(invalidId);

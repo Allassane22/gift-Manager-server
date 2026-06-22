@@ -20,7 +20,8 @@ const subscriptionRoutes = require("./routes/subscription.routes");
 const partnerRoutes = require("./routes/partner.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const serviceConfigRoutes = require("./routes/serviceConfig.routes"); // ← Conv. A
-const whatsappTemplateRoutes = require("./routes/whatsappTemplate.routes"); // ← Conv. B
+const whatsappTemplateRoutes = require("./routes/whatsappTemplate.routes");
+require("./models/PartnerBilling"); // preload PartnerBilling model // ← Conv. B
 
 // ─── Validation des secrets JWT au démarrage ──────────────────────────────────
 const WEAK_SECRETS = [

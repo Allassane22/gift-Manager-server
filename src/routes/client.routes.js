@@ -88,20 +88,31 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // POST /api/clients
-router.post('/', restrict('admin'), async (req, res, next) => {
+router.post('/', restrict('admin', 'partner'), async (req, res, next) => {
   try {
     const { name, phone, email, notes, referredBy } = normalizeOptionalClientFields(req.body);
     if (!name || !phone) return res.status(400).json({ success: false, message: 'Nom et téléphone requis' });
-    const client = await Client.create({ name, phone, email, notes, referredBy });
+    // Un partenaire est automatiquement le référent de ses propres clients
+    const actualReferredBy = req.user.role === 'partner' ? req.user._id : (referredBy || null);
+    const client = await Client.create({ name, phone, email, notes, referredBy: actualReferredBy });
     res.status(201).json({ success: true, data: client });
   } catch (err) { next(err); }
 });
 
 // PUT /api/clients/:id
-router.put('/:id', restrict('admin'), async (req, res, next) => {
+router.put('/:id', restrict('admin', 'partner'), async (req, res, next) => {
   try {
     const invalidId = ensureValidObjectId(req.params.id, 'ID de client invalide');
     if (invalidId) return res.status(400).json(invalidId);
+
+    // Un partenaire ne peut modifier que ses propres clients
+    if (req.user.role === 'partner') {
+      const existing = await Client.findById(req.params.id);
+      if (!existing) return res.status(404).json({ success: false, message: 'Client introuvable' });
+      if (String(existing.referredBy) !== String(req.user._id)) {
+        return res.status(403).json({ success: false, message: 'Accès refusé' });
+      }
+    }
 
     const { name, phone, email, notes, referredBy } = normalizeOptionalClientFields(req.body);
     const client = await Client.findByIdAndUpdate(

@@ -43,6 +43,11 @@ const whatsAppTemplateSchema = new mongoose.Schema(
       type: Boolean,
       default: false, // true pour les 7 templates par défaut
     },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null, // null = template admin, ObjectId = template partenaire
+    },
     deletedAt: {
       type: Date,
       default: null,
